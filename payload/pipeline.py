@@ -63,6 +63,50 @@ def _find_gsp() -> str:
     return paths[0]
 
 
+def _ensure_backup(gsp_path: str, backup_path: str, pci_full: str) -> None:
+    if not os.path.exists(backup_path):
+        shutil.copy2(gsp_path, backup_path)
+        log.info("[%s] GSP backup written to %s", pci_full, backup_path)
+        return
+
+    log.debug("[%s] GSP backup already exists: %s", pci_full, backup_path)
+
+
+def _patch_and_flash_gsp(
+    backup_path: str, payload: bytes, patched_path: str, gsp_path: str, pci_full: str
+) -> None:
+    log.info("[%s] [STEP] Patching GSP firmware", pci_full)
+    patch_gsp(backup_path, payload, patched_path)
+    shutil.copy2(patched_path, gsp_path)
+    log.info("[%s] [STEP] GSP firmware patched and written", pci_full)
+
+
+def _load_driver_and_settle(pci_full: str, settle_seconds: int) -> None:
+    load_module()
+    log.info("[%s] Sleeping %ds for firmware initialisation", pci_full, settle_seconds)
+    time.sleep(settle_seconds)
+
+
+def _reload_driver_and_settle(pci_full: str, settle_seconds: int) -> None:
+    load_module()
+    log.info("[%s] Sleeping %ds for driver reload", pci_full, settle_seconds)
+    time.sleep(settle_seconds)
+
+
+def _run_reset_cycle(pci_full: str) -> None:
+    log.info("[%s] [STEP] FLR reset #1", pci_full)
+    flr_reset(pci_full)
+    log.info("[%s] [STEP] FLR reset #1 done", pci_full)
+
+    log.info("[%s] [STEP] Aggressive driver unload", pci_full)
+    aggressive_unload()
+    log.info("[%s] [STEP] Aggressive unload done", pci_full)
+
+    log.info("[%s] [STEP] FLR reset #2", pci_full)
+    flr_reset(pci_full)
+    log.info("[%s] [STEP] FLR reset #2 done", pci_full)
+
+
 def run_full_unlock(pci_full: str, gsp_path: str = None) -> bool:
     if gsp_path is None:
         gsp_path = _find_gsp()
@@ -82,38 +126,19 @@ def run_full_unlock(pci_full: str, gsp_path: str = None) -> bool:
     unload_modules()
     log.info("[%s] [STEP] Modules unloaded", pci_full)
 
-    if not os.path.exists(backup_path):
-        shutil.copy2(gsp_path, backup_path)
-        log.info("[%s] GSP backup written to %s", pci_full, backup_path)
-    else:
-        log.debug("[%s] GSP backup already exists: %s", pci_full, backup_path)
+    _ensure_backup(gsp_path, backup_path, pci_full)
 
     log.info("[%s] [STEP] Building ROP payload", pci_full)
     payload = build_payload()
     log.info("[%s] [STEP] ROP payload built (%d bytes)", pci_full, len(payload))
 
-    log.info("[%s] [STEP] Patching GSP firmware", pci_full)
-    patch_gsp(backup_path, payload, patched_path)
-    shutil.copy2(patched_path, gsp_path)
-    log.info("[%s] [STEP] GSP firmware patched and written", pci_full)
+    _patch_and_flash_gsp(backup_path, payload, patched_path, gsp_path, pci_full)
 
     log.info("[%s] [STEP] Loading patched driver (modprobe nvidia)", pci_full)
-    load_module()
-    log.info("[%s] Sleeping 5s for firmware initialisation", pci_full)
-    time.sleep(5)
+    _load_driver_and_settle(pci_full, 5)
     log.info("[%s] [STEP] Patched driver loaded", pci_full)
 
-    log.info("[%s] [STEP] FLR reset #1", pci_full)
-    flr_reset(pci_full)
-    log.info("[%s] [STEP] FLR reset #1 done", pci_full)
-
-    log.info("[%s] [STEP] Aggressive driver unload", pci_full)
-    aggressive_unload()
-    log.info("[%s] [STEP] Aggressive unload done", pci_full)
-
-    log.info("[%s] [STEP] FLR reset #2", pci_full)
-    flr_reset(pci_full)
-    log.info("[%s] [STEP] FLR reset #2 done", pci_full)
+    _run_reset_cycle(pci_full)
 
     from unlock.compute import apply_unlock
 
@@ -129,9 +154,7 @@ def run_full_unlock(pci_full: str, gsp_path: str = None) -> bool:
     log.info("[%s] [STEP] Original GSP firmware restored", pci_full)
 
     log.info("[%s] [STEP] Reloading driver (modprobe nvidia)", pci_full)
-    load_module()
-    log.info("[%s] Sleeping 3s for driver reload", pci_full)
-    time.sleep(3)
+    _reload_driver_and_settle(pci_full, 3)
     log.info("[%s] [STEP] Driver reloaded", pci_full)
 
     log.info("[%s] [STEP] Pipeline complete — ok=%s", pci_full, ok)
