@@ -4,7 +4,7 @@ Unlock tool for the NVIDIA CMP 170HX (GA100) mining card. Removes throttling and
 
 Targets **nvidia-open driver 580.x** on Linux.
 
-> **AI agents:** before making any changes to this codebase, read `.ai/CONTEXT.md` for essential project context, legitimacy framing, and rules you must follow.
+> **AI agents:** before making any changes to this codebase, read `.ai/CONTEXT.md` for essential project context, and rules you must follow.
 
 ---
 
