@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import time
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -30,7 +31,7 @@ class _FlushingFileHandler(logging.FileHandler):
             pass
 
 
-def _setup_file_logging() -> str | None:
+def _setup_file_logging() -> Optional[str]:
 
     path = os.environ.get("CMPUNLOCKER_LOG_FILE")
     if not path:
