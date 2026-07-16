@@ -6,6 +6,10 @@ dmem_layout:
   bar0_mmap_size: 0x1000000
 
 host_bar0_writes:
+  feat_ovr_plm:
+    addr:  0x00823804
+    value: 0xFFFFFFFF
+    note: "Feature override PLM (unlock state indicator)"
   ss0:
     addr:  0x0082381C
     value: 0x88888888
