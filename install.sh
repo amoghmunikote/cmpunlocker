@@ -2,7 +2,7 @@
 set -euo pipefail
 
 #############################################################################
-#  cmpunlocker — one-shot install (patch nvidia-open 610.43.03 modules only)
+#  cmpunlocker — one-shot install (patch nvidia-open 610.43.0x modules only)
 #
 #  Usage:
 #    sudo ./install.sh                 # auto-detect 8GB→64GB or 10GB→40GB
@@ -11,7 +11,8 @@ set -euo pipefail
 #############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REQUIRED_VERSION="$(tr -d '[:space:]' < "${SCRIPT_DIR}/driver/VERSION")"
+mapfile -t SUPPORTED_VERSIONS < <(grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' "${SCRIPT_DIR}/driver/VERSION")
+SUPPORTED_VERSIONS_CSV="$(IFS=', '; echo "${SUPPORTED_VERSIONS[*]}")"
 LOG_DIR="${SCRIPT_DIR}/logs"
 mkdir -p "${LOG_DIR}"
 LOG_FILE="${LOG_DIR}/install_$(date +%Y%m%d_%H%M%S).log"
@@ -147,12 +148,22 @@ case "${CARD_PROFILE}" in
 esac
 export CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}"
 
-step "Step 4/6: Verifying nvidia-open ${REQUIRED_VERSION}"
+step "Step 4/6: Verifying nvidia-open (${SUPPORTED_VERSIONS_CSV})"
+[[ ${#SUPPORTED_VERSIONS[@]} -gt 0 ]] || die "No supported versions listed in driver/VERSION"
 if [[ -d /sys/firmware/efi ]] && command -v mokutil &>/dev/null; then
     if mokutil --sb-state 2>/dev/null | grep -qi 'SecureBoot enabled'; then
         die "Secure Boot is enabled. Disable it before installing unsigned patched modules."
     fi
 fi
+
+version_supported() {
+    local v="$1"
+    local s
+    for s in "${SUPPORTED_VERSIONS[@]}"; do
+        [[ "${v}" == "${s}" ]] && return 0
+    done
+    return 1
+}
 
 detected=""
 if [[ -r /proc/driver/nvidia/version ]]; then
@@ -162,24 +173,28 @@ if [[ -z "${detected}" ]] && command -v nvidia-smi &>/dev/null; then
     detected="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
 fi
 if [[ -z "${detected}" ]]; then
-    if [[ -d "/lib/firmware/nvidia/${REQUIRED_VERSION}" ]]; then
-        detected="${REQUIRED_VERSION}"
-    else
+    for cand in "${SUPPORTED_VERSIONS[@]}"; do
+        if [[ -d "/lib/firmware/nvidia/${cand}" ]]; then
+            detected="${cand}"
+            break
+        fi
+    done
+    if [[ -z "${detected}" ]]; then
         fw="$(ls -d /lib/firmware/nvidia/*/ 2>/dev/null | sed 's|.*/nvidia/||;s|/||' | sort -rV | head -1 || true)"
         detected="${fw}"
     fi
 fi
 
-[[ -n "${detected}" ]] || die "Could not detect an installed NVIDIA driver. Install nvidia-open ${REQUIRED_VERSION} first."
-[[ "${detected}" == "${REQUIRED_VERSION}" ]] || die "Installed driver is ${detected}, but cmpunlocker requires ${REQUIRED_VERSION}."
-ok "NVIDIA driver ${detected} matches required version"
+[[ -n "${detected}" ]] || die "Could not detect an installed NVIDIA driver. Install nvidia-open ${SUPPORTED_VERSIONS_CSV} first."
+version_supported "${detected}" || die "Installed driver is ${detected}, but cmpunlocker requires one of: ${SUPPORTED_VERSIONS_CSV}."
+ok "NVIDIA driver ${detected} is supported"
 
 [[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). Install linux-headers-$(uname -r) or kernel-devel."
 ok "Kernel headers present for $(uname -r)"
 
 step "Step 5/6: Building and installing patched modules"
 chmod +x "${SCRIPT_DIR}/driver/build.sh"
-CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" "${SCRIPT_DIR}/driver/build.sh"
+CMPUNLOCKER_DRIVER_VERSION="${detected}" CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
 step "Step 6/6: Done"

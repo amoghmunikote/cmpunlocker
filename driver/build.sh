@@ -2,11 +2,13 @@
 set -euo pipefail
 
 #############################################################################
-#  cmpunlocker — build & install patched open kernel modules for 610.43.03
+#  cmpunlocker — build & install patched open kernel modules for 610.43.0x
 #############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="$(tr -d '[:space:]' < "${SCRIPT_DIR}/VERSION")"
+mapfile -t SUPPORTED_VERSIONS < <(grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' "${SCRIPT_DIR}/VERSION")
+DEFAULT_VERSION="${SUPPORTED_VERSIONS[0]:-}"
+VERSION="${CMPUNLOCKER_DRIVER_VERSION:-${DEFAULT_VERSION}}"
 PATCH_DIR="${SCRIPT_DIR}/patches"
 BUILD_ROOT="${CMPUNLOCKER_BUILD_DIR:-${SCRIPT_DIR}/.build}"
 SRC_NAME="open-gpu-kernel-modules-${VERSION}"
@@ -28,10 +30,22 @@ ok()   { echo -e "${GREEN}[ OK ]${NC}  $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 die()  { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
 
+version_supported() {
+    local v="$1"
+    local s
+    for s in "${SUPPORTED_VERSIONS[@]}"; do
+        [[ "${v}" == "${s}" ]] && return 0
+    done
+    return 1
+}
+
 [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo ${SCRIPT_DIR}/build.sh"
+[[ -n "${VERSION}" ]] || die "No driver version set (driver/VERSION empty and CMPUNLOCKER_DRIVER_VERSION unset)"
+version_supported "${VERSION}" || die "Unsupported driver version '${VERSION}' (supported: ${SUPPORTED_VERSIONS[*]})"
 [[ -d "${PATCH_DIR}" ]] || die "Missing patches directory: ${PATCH_DIR}"
 [[ -d "${KSRC}" ]] || die "Kernel headers not found at ${KSRC}. Install linux-headers-${KVER} (or kernel-devel)."
 command -v python3 &>/dev/null || die "python3 is required to apply the card memory profile"
+info "Building against open-gpu-kernel-modules ${VERSION}"
 
 mkdir -p "${BUILD_ROOT}"
 
@@ -135,6 +149,7 @@ print(f"cfg1={cfg1} lmr={lmr} fb={fb} ({label})")
 PY
 ok "Memory profile ${PROFILE}: CFG1=${CFG1} LMR=${LMR} fb=${FB_BYTES} (${UNLOCK_LABEL})"
 mkdir -p "${INSTALL_MOD_DIR}"
+printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
 printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
 printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
 
@@ -174,6 +189,45 @@ depmod -a "${KVER}"
 ok "depmod complete"
 
 #############################################################################
+#  Initramfs — required so early boot does not keep loading stock DKMS
+#############################################################################
+
+# NVIDIA often loads from initramfs. If only updates/dkms is packed there,
+# stock modules win at boot even when updates/cmpunlocker is preferred by depmod.
+rebuild_initramfs() {
+    if command -v update-initramfs &>/dev/null; then
+        info "Rebuilding initramfs (update-initramfs) so patched modules load at boot..."
+        update-initramfs -u -k "${KVER}"
+        ok "initramfs rebuilt"
+        return 0
+    fi
+    if command -v dracut &>/dev/null; then
+        info "Rebuilding initramfs (dracut) so patched modules load at boot..."
+        dracut --force --kver "${KVER}"
+        ok "initramfs rebuilt"
+        return 0
+    fi
+    if command -v mkinitcpio &>/dev/null; then
+        info "Rebuilding initramfs (mkinitcpio) so patched modules load at boot..."
+        mkinitcpio -P
+        ok "initramfs rebuilt"
+        return 0
+    fi
+    warn "No initramfs tool found — rebuild manually before rebooting"
+    return 1
+}
+
+rebuild_initramfs || true
+
+resolved="$(modprobe -n -v nvidia 2>/dev/null | awk '/insmod/ {print $2; exit}' || true)"
+if [[ -n "${resolved}" ]]; then
+    info "modprobe will load: ${resolved}"
+    if [[ "${resolved}" != *"/updates/cmpunlocker/"* ]]; then
+        warn "Resolved nvidia.ko is not under updates/cmpunlocker/ — stock may still win"
+    fi
+fi
+
+#############################################################################
 #  Reload
 #############################################################################
 
@@ -195,19 +249,27 @@ if ! lsmod | grep -q '^nvidia '; then
         modprobe nvidia-drm 2>/dev/null || true
         reload_ok=1
         ok "Patched NVIDIA modules loaded"
+        running_src="$(cat /sys/module/nvidia/srcversion 2>/dev/null || true)"
+        patched_src="$(modinfo -F srcversion "${INSTALL_MOD_DIR}/nvidia.ko" 2>/dev/null || true)"
+        if [[ -n "${running_src}" && -n "${patched_src}" && "${running_src}" != "${patched_src}" ]]; then
+            warn "Loaded nvidia srcversion (${running_src}) != patched (${patched_src})"
+            reload_ok=0
+        fi
     else
         warn "modprobe failed after install"
     fi
 else
-    warn "Could not unload nvidia modules (in use)"
+    warn "Could not unload nvidia modules (in use) — cold reboot required"
 fi
 
 echo ""
 if [[ "${reload_ok}" -eq 1 ]]; then
     ok "Build and install finished. Verify with: nvidia-smi"
-    info "If memory still shows 8192 MiB, do a cold shutdown (power off), then boot."
+    info "If memory still shows stock size, do a cold shutdown (power off), then boot."
 else
-    warn "Modules installed but not reloaded."
+    warn "Modules installed but the running driver is still stock (or unload failed)."
     info "Perform a cold reboot: shutdown -h now  (then power on)"
+    info "After boot, confirm: cat /proc/driver/nvidia/version  (should NOT say dvs-builder)"
+    info "And: sudo dmesg | grep SEC2_DEBUG"
 fi
 echo ""

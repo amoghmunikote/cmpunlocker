@@ -9,22 +9,27 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 DRIVER = REPO / "driver"
 PATCHES = DRIVER / "patches"
-VERSION = (DRIVER / "VERSION").read_text(encoding="utf-8").strip()
+VERSIONS = [
+    line.strip()
+    for line in (DRIVER / "VERSION").read_text(encoding="utf-8").splitlines()
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", line.strip())
+]
 CONSTANTS = REPO / "common" / "constants.yaml"
 
 
 def test_version_file():
-    assert VERSION == "610.43.03"
+    assert VERSIONS == ["610.43.03", "610.43.02"]
 
 
 def test_constants_yaml_profiles():
     data = yaml.safe_load(CONSTANTS.read_text(encoding="utf-8"))
-    assert data["driver_version"] == VERSION
+    assert data["driver_versions"] == VERSIONS
     assert "20c2" in data["gpu"]["device_ids"]
     assert set(data["profiles"]) == {"8gb", "10gb"}
     assert data["profiles"]["8gb"]["unlocked_mib"] == 65536
@@ -64,24 +69,24 @@ def test_install_help_mentions_profiles():
     assert "--profile=10gb" in result.stdout
 
 
-def _extract_stock(tmp_path: Path) -> Path:
+def _extract_stock(tmp_path: Path, version: str) -> Path:
     cache_dir = Path(os.environ.get("CMPUNLOCKER_BUILD_DIR", DRIVER / ".build"))
     cache_dir.mkdir(parents=True, exist_ok=True)
-    tarball = cache_dir / f"open-gpu-kernel-modules-{VERSION}.tar.gz"
+    tarball = cache_dir / f"open-gpu-kernel-modules-{version}.tar.gz"
     url = (
         "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/"
-        f"{VERSION}.tar.gz"
+        f"{version}.tar.gz"
     )
     if not tarball.is_file():
         urllib.request.urlretrieve(url, tarball)
 
-    extract_root = tmp_path / "src"
+    extract_root = tmp_path / f"src-{version}"
     extract_root.mkdir()
     with tarfile.open(tarball, "r:gz") as tar:
         tar.extractall(extract_root, filter="data")
 
-    matches = list(extract_root.glob(f"open-gpu-kernel-modules-{VERSION}*"))
-    assert matches, "extracted source tree not found"
+    matches = list(extract_root.glob(f"open-gpu-kernel-modules-{version}*"))
+    assert matches, f"extracted source tree not found for {version}"
     return matches[0]
 
 
@@ -95,7 +100,8 @@ def _apply_patches(src: Path) -> None:
             check=False,
         )
         assert result.returncode == 0, (
-            f"apply failed for {patch.name}:\n{result.stdout}\n{result.stderr}"
+            f"apply failed for {patch.name} on {src.name}:\n"
+            f"{result.stdout}\n{result.stderr}"
         )
 
 
@@ -123,8 +129,9 @@ def _rewrite_geometry(gsp_c: Path, cfg1: str, lmr: str, fb: str, label: str) -> 
     gsp_c.write_text(text2)
 
 
-def test_patches_apply_to_stock_tree(tmp_path):
-    src = _extract_stock(tmp_path)
+@pytest.mark.parametrize("version", VERSIONS)
+def test_patches_apply_to_stock_tree(tmp_path, version):
+    src = _extract_stock(tmp_path, version)
     _apply_patches(src)
     gsp = src / "src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
     text = gsp.read_text()
@@ -132,8 +139,9 @@ def test_patches_apply_to_stock_tree(tmp_path):
     assert "0x0000001000000000" in text
 
 
-def test_10gb_geometry_rewrite(tmp_path):
-    src = _extract_stock(tmp_path)
+@pytest.mark.parametrize("version", VERSIONS)
+def test_10gb_geometry_rewrite(tmp_path, version):
+    src = _extract_stock(tmp_path, version)
     _apply_patches(src)
     gsp = src / "src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
     _rewrite_geometry(

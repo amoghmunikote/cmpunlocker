@@ -1,5 +1,7 @@
-# cmpunlocker — supported target for the in-driver unlock path
-driver_version: "610.43.03"
+# cmpunlocker — supported nvidia-open targets for the in-driver unlock path
+driver_versions:
+  - "610.43.03"
+  - "610.43.02"
 
 # CMP 170HX PCI device IDs (vendor 10de). Unlock code gates on 0x20C2.
 gpu:

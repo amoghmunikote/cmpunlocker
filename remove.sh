@@ -46,7 +46,7 @@ if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     exit 1
 fi
 
-step "Step 1/4: Verifying root privileges"
+step "Step 1/5: Verifying root privileges"
 [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo ./remove.sh --yes"
 ok "Running as root"
 
@@ -57,7 +57,7 @@ fi
 LOG_FILE="${LOG_DIR}/remove_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
-step "Step 2/4: Stopping leftover cmpunlocker service"
+step "Step 2/5: Stopping leftover cmpunlocker service"
 if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
     systemctl stop "${SERVICE_NAME}" || true
     ok "Service stopped"
@@ -76,8 +76,9 @@ if [[ -f "${SERVICE_FILE}" ]]; then
 fi
 pkill -f "${INSTALL_DIR}/daemon/watchdog.py" 2>/dev/null || true
 
-step "Step 3/4: Removing patched modules and legacy files"
+step "Step 3/5: Removing patched modules and legacy files"
 mod_removed=0
+kernels_touched=()
 shopt -s nullglob
 for mod_dir in /lib/modules/*/updates/cmpunlocker; do
     if [[ -d "${mod_dir}" ]]; then
@@ -86,9 +87,25 @@ for mod_dir in /lib/modules/*/updates/cmpunlocker; do
         depmod -a "${kernel}" 2>/dev/null || true
         ok "Removed patched modules for kernel ${kernel}"
         mod_removed=$((mod_removed + 1))
+        kernels_touched+=("${kernel}")
     fi
 done
 [[ "${mod_removed}" -gt 0 ]] || warn "No patched kernel modules found"
+
+if [[ ${#kernels_touched[@]} -gt 0 ]]; then
+    info "Rebuilding initramfs so stock modules are packed again..."
+    for kernel in "${kernels_touched[@]}"; do
+        if command -v update-initramfs &>/dev/null; then
+            update-initramfs -u -k "${kernel}" 2>/dev/null || true
+        elif command -v dracut &>/dev/null; then
+            dracut --force --kver "${kernel}" 2>/dev/null || true
+        fi
+    done
+    if command -v mkinitcpio &>/dev/null && ! command -v update-initramfs &>/dev/null && ! command -v dracut &>/dev/null; then
+        mkinitcpio -P 2>/dev/null || true
+    fi
+    ok "initramfs rebuild attempted"
+fi
 
 # Clean leftover GSP backups from older cmpunlocker versions
 for gsp in /lib/firmware/nvidia/*/gsp_tu10x.bin; do
@@ -107,7 +124,7 @@ else
     warn "${INSTALL_DIR} not found (ok for module-only installs)"
 fi
 
-step "Step 4/4: Reloading stock NVIDIA driver"
+step "Step 4/5: Reloading stock NVIDIA driver"
 if lsmod | grep -q '^nvidia'; then
     warn "Unloading NVIDIA modules (display may flicker)"
     for svc in gdm3 sddm lightdm display-manager; do
