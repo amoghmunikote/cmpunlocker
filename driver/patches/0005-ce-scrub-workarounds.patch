@@ -12,7 +12,8 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/arch/turing/mem_mgr_tu102.c b/src
  
 +    pGpu = ENG_GET_GPU(pMemoryManager);
 +    if (pGpu != NULL &&
-+        (pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2)
++        ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2 ||
++         (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082))
 +    {
 +        *pteKind = NV_MMU_PTE_KIND_GENERIC_MEMORY;
 +        return;
@@ -30,7 +31,8 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/mem_scrub.c b/src/nvidia/src/kern
  
 -        if (memmgrUseVasForCeMemoryOps(pMemoryManager))
 +        if (memmgrUseVasForCeMemoryOps(pMemoryManager) &&
-+            ((pGpu->idInfo.PCIDeviceID >> 16) != 0x20C2))
++            ((pGpu->idInfo.PCIDeviceID >> 16) != 0x20C2 &&
++             (pGpu->idInfo.PCIDeviceID >> 16) != 0x2082))
          {
              ceUtilsAllocParams.flags = DRF_DEF(0050, _CEUTILS_FLAGS, _VIRTUAL_MODE, _TRUE);
          }

@@ -17,7 +17,8 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  
  #include "crashcat/crashcat_report.h"
  
-+#define SEC2_POSTBL_TIMING_CMP_170HX_PCI_DEVICE_ID      0x20C2
++#define SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID   0x20C2
++#define SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID 0x2082
 +#define SEC2_POSTBL_TIMING_SIGNATURE_SIZE          0x0000f800ULL
 +#define SEC2_POSTBL_TIMING_FILL_DWORD              0x000004a7U
 +#define SEC2_POSTBL_TIMING_DMEM_PATH               "/lib/firmware/nvidia/ga100/gsp/dmem.bin"
@@ -30,7 +31,8 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +_kgspSec2PostblTimingEnabled(OBJGPU *pGpu)
 +{
 +    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
-+    return (devId == SEC2_POSTBL_TIMING_CMP_170HX_PCI_DEVICE_ID);
++    return (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
++            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID);
 +}
  
  struct MIG_CI_UPDATE_CALLBACK_PARAMS
@@ -127,8 +129,20 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +                  GPU_REG_RD32(pGpu, 0x001fa7ccU));
 +
 +        {
-+            NvU32 cfg1Value = 0x02779000U;
-+            NvU32 lmrValue  = 0x0000020BU;
++            NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++            NvU32 cfg1Value;
++            NvU32 lmrValue;
++
++            if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
++            {
++                cfg1Value = 0x02779000U;  // 8GB card: 64GB unlock
++                lmrValue  = 0x0000020BU;
++            }
++            else
++            {
++                cfg1Value = 0x02669000U;  // 10GB card: 40GB unlock
++                lmrValue  = 0x0000028AU;
++            }
 +
 +            GPU_REG_WR32(pGpu, 0x0082381cU, 0x88888888U);
 +            GPU_REG_WR32(pGpu, 0x00823820U, 0x00000008U);
@@ -137,11 +151,12 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +
 +            NV_PRINTF(LEVEL_ERROR,
 +                      "SEC2_DEBUG: POST-WRITE SS0=0x%08x SS1=0x%08x "
-+                      "CFG1=0x%08x LMR=0x%08x\n",
++                      "CFG1=0x%08x LMR=0x%08x (devId=0x%x)\n",
 +                      GPU_REG_RD32(pGpu, 0x0082381cU),
 +                      GPU_REG_RD32(pGpu, 0x00823820U),
 +                      GPU_REG_RD32(pGpu, 0x009a0204U),
-+                      GPU_REG_RD32(pGpu, 0x00100ce0U));
++                      GPU_REG_RD32(pGpu, 0x00100ce0U),
++                      devId);
 +        }
 +
 +        plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
@@ -173,12 +188,15 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  
 +    {
 +        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
-+        if (devId == 0x20C2)
++        if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
++            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID)
 +        {
 +            GspStaticConfigInfo *pGSCI = &pKernelGsp->gspStaticInfo;
 +            NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_PARAMS *pFbRegionInfoParams =
 +                &pGSCI->fbRegionInfoParams;
-+            NvU64 targetFbBytes = 0x0000001000000000ULL;  /* 64GB */
++            NvU64 targetFbBytes = (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
++                                    ? 0x0000001000000000ULL   /* 64GB for 8GB card */
++                                    : 0x0000000A00000000ULL;  /* 40GB for 10GB card */
 +            NvU64 stockFbBytes  = 0x0000000200000000ULL;  /* 8GB */
 +            NvU32 numRegions = pFbRegionInfoParams->numFBRegions;
 +

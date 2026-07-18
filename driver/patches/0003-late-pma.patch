@@ -8,7 +8,7 @@ diff -Naur a/src/nvidia/arch/nvalloc/unix/src/osinit.c b/src/nvidia/arch/nvalloc
 +    if (pGpu != NULL)
 +    {
 +        NvU32 devId = (pGpu->idInfo.PCIDeviceID) >> 16;
-+        if (devId == 0x20C2)
++        if (devId == 0x20C2 || devId == 0x2082)
 +        {
 +            NV_STATUS latePmaStatus =
 +                memmgrSec2DebugLateExtendHighPmaRegion(pGpu, GPU_GET_MEMORY_MANAGER(pGpu));
@@ -39,7 +39,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/mem_mgr.c b/src/nvidia/src/kernel
 +
 +        {
 +            NvU32 devId2 = pGpu->idInfo.PCIDeviceID >> 16;
-+            if (devId2 == 0x20C2)
++            if (devId2 == 0x20C2 || devId2 == 0x2082)
 +            {
 +                NvU32 ri;
 +                NvU64 regionBytes = 0, publicBytes = 0;
@@ -98,10 +98,10 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/mem_mgr.c b/src/nvidia/src/kernel
 +        return NV_ERR_INVALID_ARGUMENT;
 +
 +    devId = pGpu->idInfo.PCIDeviceID >> 16;
-+    if (devId != 0x20C2)
++    if (devId != 0x20C2 && devId != 0x2082)
 +        return NV_OK;
 +
-+    stockFbBytes = 0x200000000ULL;
++    stockFbBytes = 0x200000000ULL;  /* 8GB */
 +
 +    pHeap = pMemoryManager->pHeap;
 +    if (pHeap == NULL || pHeap->pPmaObject == NULL || !memmgrIsPmaInitialized(pMemoryManager))
@@ -256,7 +256,8 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/mem_mgr.c b/src/nvidia/src/kernel
          IS_SILICON(pGpu) && !pMemorySystemConfig->bDisableCompbitBacking &&
 -        (pMemorySystemConfig->bUseRawModeComptaglineAllocation || pMemorySystemConfig->bOneToOneComptagLineAllocation))
 +        (pMemorySystemConfig->bUseRawModeComptaglineAllocation || pMemorySystemConfig->bOneToOneComptagLineAllocation) &&
-+        ((pGpu->idInfo.PCIDeviceID >> 16) != 0x20C2))
++        ((pGpu->idInfo.PCIDeviceID >> 16) != 0x20C2 &&
++         (pGpu->idInfo.PCIDeviceID >> 16) != 0x2082))
      {
          // Turn on virtual mode to enable compressed allocation access
          ceUtilsParams.flags |= DRF_DEF(0050_CEUTILS, _FLAGS, _VIRTUAL_MODE, _TRUE);
