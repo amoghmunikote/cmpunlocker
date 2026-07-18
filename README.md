@@ -8,8 +8,6 @@ Targets **nvidia-open driver 610.43.0x** on Linux. cmpunlocker
 does **not** install the full NVIDIA userspace package — it patches and
 installs open kernel modules only.
 
-> **AI agents:** before making changes, read `.ai/CONTEXT.md`.
-
 ---
 
 ## Background
