@@ -17,6 +17,8 @@ env/
 .coverage
 htmlcov/
 .tox/
+__pycache__/
+tests/__pycache__/
 .vscode/
 .idea/
 .claude/
@@ -34,3 +36,6 @@ credentials.json
 *.cmpunlocker.bak
 *.cmpunlocker.patched
 *.backup
+driver/.build/
+logs/
+*.tar.gz

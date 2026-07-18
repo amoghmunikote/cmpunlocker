@@ -1,8 +1,0 @@
-[MESSAGES CONTROL]
-disable=
-    missing-module-docstring,
-    missing-function-docstring,
-    missing-class-docstring,
-    wrong-import-position,
-    broad-exception-caught,
-    import-outside-toplevel,
