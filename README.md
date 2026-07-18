@@ -4,7 +4,7 @@ Unlock tool for the NVIDIA CMP 170HX (GA100) mining card. Restores full SM
 compute throughput and unlocked HBM2e memory geometry that are restricted in
 firmware/OTP configuration.
 
-Targets **nvidia-open driver 610.43.03 or 610.43.02** on Linux. cmpunlocker
+Targets **nvidia-open driver 610.43.0x** on Linux. cmpunlocker
 does **not** install the full NVIDIA userspace package — it patches and
 installs open kernel modules only.
 
@@ -34,7 +34,7 @@ Card size selects the memory geometry:
 - Linux (x86-64)
 - Root access
 - NVIDIA CMP 170HX (`10de:20c2` preferred; `20b0` / `2082` detected but unlock is `0x20C2`-gated)
-- **nvidia-open 610.43.03 or 610.43.02 already installed** (libs + firmware)
+- **nvidia-open 610.43.0x already installed** (libs + firmware)
 - Kernel headers matching the running kernel (`linux-headers-$(uname -r)` / `kernel-devel`)
 - Secure Boot disabled (patched modules are unsigned)
 - Network access on first install (downloads matching stock `open-gpu-kernel-modules` sources)
@@ -128,38 +128,3 @@ cleanly.
 6. Rebuilds initramfs so early boot loads the patched modules (not leftover DKMS stock)
 7. On load, `_kgspBootGspRm` opens PLMs via SEC2 Booter, writes SS0/SS1/CFG1/LMR,
    restores the stock GSP signature, boots GSP-RM, then extends FB length / PMA
-
----
-
-## Troubleshooting
-
-**`nvidia-smi` still shows stock memory (8192 / 10240 MiB)**  
-First confirm the patched module is actually running:
-
-```bash
-cat /proc/driver/nvidia/version
-# Patched local build: hostname/timestamp from your machine
-# Stock DKMS: looks like (dvs-builder@...) — unlock will NOT run
-
-sudo dmesg | grep SEC2_DEBUG
-# Must be non-empty. If empty, initramfs/boot still loaded stock modules.
-```
-
-If you see `dvs-builder` or zero `SEC2_DEBUG` lines, re-run `sudo ./install.sh`
-(which rebuilds initramfs) and cold power-cycle. When unlock runs, all PLMs should
-read `0xffffffff`.
-
-**Wrong unlock size (64GB on a 10GB card or vice versa)**  
-Reinstall with an explicit profile: `sudo ./install.sh --profile=10gb` or `--profile=8gb`.
-
-**Secure Boot / module load refused**  
-Disable Secure Boot in firmware settings.
-
-**Build fails: kernel source not found**  
-Install headers for the running kernel, then re-run `sudo ./install.sh`.
-
-**Driver version mismatch**  
-cmpunlocker supports **610.43.03** and **610.43.02**. Install one of those nvidia-open releases first.
-
-**`NV_ERR_INSUFFICIENT_RESOURCES (0x1A)`**  
-WPR/FB layout did not pick up the unlocked size. Capture full `SEC2_DEBUG` dmesg output.
