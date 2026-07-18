@@ -62,14 +62,14 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c b/src/
 +
 +    {
 +        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
-+        if (devId == 0x20C2)
++        if (devId == 0x20C2 || devId == 0x2082)
 +            NV_PRINTF(LEVEL_ERROR,
 +                      "SEC2_DEBUG: normal BooterLoad status=0x%x\n", status);
 +    }
 +
 +    {
 +        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
-+        if (devId == 0x20C2 && status == NV_OK)
++        if ((devId == 0x20C2 || devId == 0x2082) && status == NV_OK)
 +        {
 +            NV_PRINTF(LEVEL_ERROR,
 +                      "SEC2_DEBUG: POST-BooterLoad verify PLM=0x%08x SS0=0x%08x SS1=0x%08x "
