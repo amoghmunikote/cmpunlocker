@@ -1,23 +1,17 @@
-# cmpunlocker — supported nvidia-open targets for the in-driver unlock path
 driver_versions:
   - "610.43.03"
   - "610.43.02"
 
-# CMP 170HX PCI device IDs (vendor 10de). Unlock code gates on 0x20C2.
 gpu:
   vendor_id: "10de"
   device_ids:
-    - "20c2"   # primary (in-driver unlock enabled)
-    - "20b0"
+    - "20c2"
     - "2082"
 
-# Shared compute unlock registers (same on both card sizes)
 compute:
   ss0: "0x88888888"
   ss1: "0x00000008"
 
-# Card physical size → unlock geometry profile
-# Selected automatically by install.sh from stock nvidia-smi memory, or via --profile=
 profiles:
   "8gb":
     stock_mib: 8192
