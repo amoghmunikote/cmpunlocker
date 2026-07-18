@@ -29,6 +29,12 @@ Card size selects the memory geometry:
 
 ---
 
+## Proof
+
+<img width="1845" height="894" alt="memory" src="https://github.com/user-attachments/assets/fda120c3-c172-4cbe-84d8-9d51ce00c746" />
+<img width="1593" height="1371" alt="performance" src="https://github.com/user-attachments/assets/4e890f44-e8bf-4051-910f-2b078f965da3" />
+
+
 ## Requirements
 
 - Linux (x86-64)
