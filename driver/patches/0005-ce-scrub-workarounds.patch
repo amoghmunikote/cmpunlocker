@@ -1,7 +1,7 @@
 diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/arch/turing/mem_mgr_tu102.c b/src/nvidia/src/kernel/gpu/mem_mgr/arch/turing/mem_mgr_tu102.c
 --- a/src/nvidia/src/kernel/gpu/mem_mgr/arch/turing/mem_mgr_tu102.c	2026-07-18 11:26:26.913308290 -0700
 +++ b/src/nvidia/src/kernel/gpu/mem_mgr/arch/turing/mem_mgr_tu102.c	2026-07-18 11:26:26.914385381 -0700
-@@ -570,9 +570,19 @@
+@@ -570,9 +570,20 @@
      NvU32          *pteKind
  )
  {
@@ -25,7 +25,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/arch/turing/mem_mgr_tu102.c b/src
 diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/mem_scrub.c b/src/nvidia/src/kernel/gpu/mem_mgr/mem_scrub.c
 --- a/src/nvidia/src/kernel/gpu/mem_mgr/mem_scrub.c	2026-07-18 11:26:26.905387408 -0700
 +++ b/src/nvidia/src/kernel/gpu/mem_mgr/mem_scrub.c	2026-07-18 11:26:26.906485666 -0700
-@@ -149,7 +149,8 @@
+@@ -149,7 +149,9 @@
          NV_PRINTF(LEVEL_INFO, "Starting to init CeUtils for scrubber.\n");
          NV0050_ALLOCATION_PARAMETERS ceUtilsAllocParams = {0};
  
