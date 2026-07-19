@@ -86,7 +86,7 @@ detect_card_profile() {
 
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║   cmpunlocker — 610 module unlock      ║${NC}"
+echo -e "${CYAN}║               cmpunlocker              ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
 echo ""
 
