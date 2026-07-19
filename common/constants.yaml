@@ -24,6 +24,6 @@ profiles:
     stock_mib: 10240
     unlocked_mib: 81920
     cfg1: "0x02779000"
-    lmr: "0x0000028A"
+    lmr: "0x0000028B"
     fb_bytes: "0x0000001400000000"
     comment: "10GB physical card → 80GB geometry"
