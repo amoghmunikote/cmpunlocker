@@ -39,7 +39,7 @@ Below are memory and performance results after applying the unlock:
 
 - Linux (x86-64)
 - Root access
-- NVIDIA CMP 170HX (`10de:20c2` preferred; `20b0` / `2082` detected but unlock is `0x20C2`-gated)
+- NVIDIA CMP 170HX
 - **nvidia-open 610.43.0x already installed** (libs + firmware)
 - Kernel headers matching the running kernel (`linux-headers-$(uname -r)` / `kernel-devel`)
 - Secure Boot disabled (patched modules are unsigned)

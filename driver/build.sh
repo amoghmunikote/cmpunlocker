@@ -100,10 +100,24 @@ case "${PROFILE}" in
 esac
 
 info "Applying memory profile ${PROFILE} (${UNLOCK_LABEL} geometry)..."
+
 python3 - "${GSP_C}" "${CFG1}" "${LMR}" "${FB_BYTES}" "${UNLOCK_LABEL}" <<'PY'
 import pathlib, re, sys
 path, cfg1, lmr, fb, label = sys.argv[1:6]
 text = pathlib.Path(path).read_text()
+
+# Dual-device path: both geometries are already baked into the patch.
+if (
+    "SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID" in text
+    and "SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID" in text
+    and "0x02779000U" in text
+    and "0x02669000U" in text
+    and "0x0000001000000000ULL" in text
+    and "0x0000000A00000000ULL" in text
+):
+    print(f"runtime device-id geometry (profile metadata={label})")
+    raise SystemExit(0)
+
 text2, n1 = re.subn(
     r"(NvU32 cfg1Value = )0x[0-9A-Fa-f]+(U;)",
     rf"\g<1>{cfg1}\g<2>",
