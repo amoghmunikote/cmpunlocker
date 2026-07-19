@@ -112,8 +112,8 @@ PCI="$(echo "${PCI_LINE}" | awk '{print $1}')"
 PCI_FULL="0000:${PCI}"
 DEVID="$(echo "${PCI_LINE}" | grep -oE '10de:[0-9a-fA-F]{4}' | head -1 | cut -d: -f2 | tr '[:upper:]' '[:lower:]')"
 ok "GPU detected: ${PCI_FULL} (10de:${DEVID})"
-if [[ "${DEVID}" != "20c2" ]]; then
-    warn "In-driver unlock path is gated on PCI ID 0x20C2."
+if [[ "${DEVID}" != "20c2" && "${DEVID}" != "2082" ]]; then
+    warn "In-driver unlock path is gated on PCI ID 0x20C2 / 0x2082."
     warn "This card reports 0x${DEVID}; install will continue, but unlock may not activate."
 fi
 

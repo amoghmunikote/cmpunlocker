@@ -250,7 +250,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/mem_mgr.c b/src/nvidia/src/kernel
  
  /*!
   * @brief Retrieve the size of the client FB address space
-@@ -4138,7 +4342,8 @@
+@@ -4138,7 +4342,9 @@
  
      if (!bFifoLite && !RMCFG_FEATURE_PLATFORM_GSP && bVirtualMode &&
          IS_SILICON(pGpu) && !pMemorySystemConfig->bDisableCompbitBacking &&
