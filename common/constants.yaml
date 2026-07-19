@@ -18,12 +18,12 @@ profiles:
     unlocked_mib: 65536
     cfg1: "0x02779000"
     lmr: "0x0000020B"
-    fb_bytes: "0x0000001000000000"   # 64 GiB
+    fb_bytes: "0x0000001000000000"
     comment: "8GB physical card → 64GB geometry"
   "10gb":
     stock_mib: 10240
     unlocked_mib: 40960
     cfg1: "0x02669000"
     lmr: "0x0000028A"
-    fb_bytes: "0x0000000A00000000"   # 40 GiB
+    fb_bytes: "0x0000000A00000000"
     comment: "10GB physical card → 40GB geometry"
