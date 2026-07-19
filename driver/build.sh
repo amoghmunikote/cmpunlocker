@@ -1,10 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-#############################################################################
-#  cmpunlocker — build & install patched open kernel modules for 610.43.0x
-#############################################################################
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mapfile -t SUPPORTED_VERSIONS < <(grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' "${SCRIPT_DIR}/VERSION")
 DEFAULT_VERSION="${SUPPORTED_VERSIONS[0]:-}"
@@ -49,10 +45,6 @@ info "Building against open-gpu-kernel-modules ${VERSION}"
 
 mkdir -p "${BUILD_ROOT}"
 
-#############################################################################
-#  Fetch + extract clean stock sources
-#############################################################################
-
 if [[ ! -f "${TARBALL}" ]]; then
     info "Downloading open-gpu-kernel-modules ${VERSION}..."
     curl -L --fail -o "${TARBALL}.partial" "${TARBALL_URL}"
@@ -72,10 +64,6 @@ if [[ ! -d "${SRC_DIR}" ]]; then
 fi
 ok "Sources ready: ${SRC_DIR}"
 
-#############################################################################
-#  Apply patches
-#############################################################################
-
 info "Applying unlock patches..."
 cd "${SRC_DIR}"
 shopt -s nullglob
@@ -87,11 +75,6 @@ for p in "${patches[@]}"; do
 done
 ok "All patches applied"
 
-#############################################################################
-#  Card profile geometry (8gb → 64GB unlock, 10gb → 40GB unlock)
-#############################################################################
-
-# Default matches values baked into 0001-*.patch (8GB physical → 64GB geometry).
 PROFILE="${CMPUNLOCKER_CARD_PROFILE:-8gb}"
 GSP_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
 [[ -f "${GSP_C}" ]] || die "Missing ${GSP_C} after patching"
@@ -117,7 +100,6 @@ case "${PROFILE}" in
 esac
 
 info "Applying memory profile ${PROFILE} (${UNLOCK_LABEL} geometry)..."
-# Patches ship the 8gb/64GB constants; rewrite in-tree for 10gb/40GB.
 python3 - "${GSP_C}" "${CFG1}" "${LMR}" "${FB_BYTES}" "${UNLOCK_LABEL}" <<'PY'
 import pathlib, re, sys
 path, cfg1, lmr, fb, label = sys.argv[1:6]
@@ -153,10 +135,6 @@ printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
 printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
 printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
 
-#############################################################################
-#  Build
-#############################################################################
-
 info "Building modules for kernel ${KVER}..."
 cd "${SRC_DIR}"
 find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
@@ -165,10 +143,6 @@ make clean 2>/dev/null || true
 JOBS="$(nproc)"
 make -j"${JOBS}" modules SYSSRC="${KSRC}"
 ok "Modules built"
-
-#############################################################################
-#  Install
-#############################################################################
 
 info "Installing modules to ${INSTALL_MOD_DIR}..."
 mkdir -p "${INSTALL_MOD_DIR}"
@@ -188,12 +162,6 @@ done
 depmod -a "${KVER}"
 ok "depmod complete"
 
-#############################################################################
-#  Initramfs — required so early boot does not keep loading stock DKMS
-#############################################################################
-
-# NVIDIA often loads from initramfs. If only updates/dkms is packed there,
-# stock modules win at boot even when updates/cmpunlocker is preferred by depmod.
 rebuild_initramfs() {
     if command -v update-initramfs &>/dev/null; then
         info "Rebuilding initramfs (update-initramfs) so patched modules load at boot..."
@@ -226,10 +194,6 @@ if [[ -n "${resolved}" ]]; then
         warn "Resolved nvidia.ko is not under updates/cmpunlocker/ — stock may still win"
     fi
 fi
-
-#############################################################################
-#  Reload
-#############################################################################
 
 info "Attempting to unload existing NVIDIA modules..."
 systemctl stop nvidia-persistenced 2>/dev/null || true
