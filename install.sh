@@ -18,11 +18,11 @@ for arg in "$@"; do
 Usage: sudo ./install.sh [--profile=8gb|10gb]
 
   --profile=8gb   Force 8GB physical card → 64GB unlock geometry
-  --profile=10gb  Force 10GB physical card → 40GB unlock geometry
+  --profile=10gb  Force 10GB physical card → 80GB unlock geometry
 
 Without --profile, stock nvidia-smi memory.total selects the profile:
   ~8192 MiB  → 8gb / 64GB unlock
-  ~10240 MiB → 10gb / 40GB unlock
+  ~10240 MiB → 10gb / 80GB unlock
 EOF
             exit 0
             ;;
@@ -64,10 +64,16 @@ detect_card_profile() {
         return 1
     fi
 
+    # Already-unlocked cards (reinstall): 10GB→80GB ≈81920, 8GB→64GB ≈65536
+    if (( mem_mib >= 75000 )); then
+        echo "10gb"
+        return 0
+    fi
     if (( mem_mib >= 60000 )); then
         echo "8gb"
         return 0
     fi
+    # Legacy 10GB→40GB unlock (~40960 MiB) still maps to the 10gb profile
     if (( mem_mib >= 35000 && mem_mib < 60000 )); then
         echo "10gb"
         return 0
@@ -128,8 +134,8 @@ case "${CARD_PROFILE}" in
         info "Unlock geometry: 64GB (CFG1=0x02779000 LMR=0x0000020B)"
         ;;
     10gb)
-        EXPECTED_MIB=40960
-        info "Unlock geometry: 40GB (CFG1=0x02669000 LMR=0x0000028A)"
+        EXPECTED_MIB=81920
+        info "Unlock geometry: 80GB (CFG1=0x02779000 LMR=0x0000028A)"
         ;;
     *)
         die "Internal error: bad profile ${CARD_PROFILE}"

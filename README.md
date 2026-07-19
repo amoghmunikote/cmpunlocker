@@ -17,7 +17,7 @@ Card size selects the memory geometry:
 | Physical card | Unlock geometry | CFG1 | LMR |
 |---|---|---|---|
 | **8 GB** | **64 GB** | `0x02779000` | `0x0000020B` |
-| **10 GB** | **40 GB** | `0x02669000` | `0x0000028A` |
+| **10 GB** | **80 GB** | `0x02779000` | `0x0000028A` |
 
 ---
 
@@ -60,7 +60,7 @@ Force a profile if detection is wrong or `nvidia-smi` is unavailable:
 
 ```bash
 sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
-sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
+sudo ./install.sh --profile=10gb   # 10GB card → 80GB unlock
 ```
 
 Then perform a **cold reboot** (full power off, then boot) if modules did not hot-reload cleanly, or if memory still shows the stock size.
@@ -72,7 +72,7 @@ Then perform a **cold reboot** (full power off, then boot) if modules did not ho
 ```bash
 nvidia-smi
 # 8GB card:  expect ~65536 MiB
-# 10GB card: expect ~40960 MiB
+# 10GB card: expect ~81920 MiB
 
 nvidia-smi --query-gpu=memory.total,clocks.max.sm --format=csv
 
@@ -92,7 +92,7 @@ Booter status codes such as `0x31` / `0xffff` during the early PLM Booter passes
 | Feature | Status |
 |---|---|
 | Full SM compute throughput (SS0/SS1) | Working ✓ |
-| Memory geometry (64GB on 8GB cards, 40GB on 10GB cards) | Working ✓ |
+| Memory geometry (64GB on 8GB cards, 80GB on 10GB cards) | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
 
 ---

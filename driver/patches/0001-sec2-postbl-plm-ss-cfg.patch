@@ -140,7 +140,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +            }
 +            else
 +            {
-+                cfg1Value = 0x02669000U;  // 10GB card: 40GB unlock
++                cfg1Value = 0x02779000U;  // 10GB card: 80GB unlock
 +                lmrValue  = 0x0000028AU;
 +            }
 +
@@ -196,7 +196,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +                &pGSCI->fbRegionInfoParams;
 +            NvU64 targetFbBytes = (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
 +                                    ? 0x0000001000000000ULL   /* 64GB for 8GB card */
-+                                    : 0x0000000A00000000ULL;  /* 40GB for 10GB card */
++                                    : 0x0000001400000000ULL;  /* 80GB for 10GB card */
 +            NvU64 stockFbBytes  = 0x0000000200000000ULL;  /* 8GB */
 +            NvU32 numRegions = pFbRegionInfoParams->numFBRegions;
 +

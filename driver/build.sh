@@ -89,10 +89,10 @@ case "${PROFILE}" in
         ;;
     10gb|10GB)
         PROFILE="10gb"
-        CFG1="0x02669000"
+        CFG1="0x02779000"
         LMR="0x0000028A"
-        FB_BYTES="0x0000000A00000000"
-        UNLOCK_LABEL="40GB"
+        FB_BYTES="0x0000001400000000"
+        UNLOCK_LABEL="80GB"
         ;;
     *)
         die "Unknown CMPUNLOCKER_CARD_PROFILE='${PROFILE}' (use 8gb or 10gb)"
@@ -111,9 +111,10 @@ if (
     "SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID" in text
     and "SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID" in text
     and "0x02779000U" in text
-    and "0x02669000U" in text
+    and "0x0000020BU" in text
+    and "0x0000028AU" in text
     and "0x0000001000000000ULL" in text
-    and "0x0000000A00000000ULL" in text
+    and "0x0000001400000000ULL" in text
 ):
     print(f"runtime device-id geometry (profile metadata={label})")
     raise SystemExit(0)
