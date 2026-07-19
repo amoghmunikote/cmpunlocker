@@ -1,10 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-#############################################################################
-#  cmpunlocker — remove patched modules and restore stock nvidia-open load
-#############################################################################
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="cmpunlocker"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -107,7 +103,6 @@ if [[ ${#kernels_touched[@]} -gt 0 ]]; then
     ok "initramfs rebuild attempted"
 fi
 
-# Clean leftover GSP backups from older cmpunlocker versions
 for gsp in /lib/firmware/nvidia/*/gsp_tu10x.bin; do
     rm -f \
         "${gsp}.cmpunlocker.bak" \

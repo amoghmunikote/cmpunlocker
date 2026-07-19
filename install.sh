@@ -1,15 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-#############################################################################
-#  cmpunlocker — one-shot install (patch nvidia-open 610.43.0x modules only)
-#
-#  Usage:
-#    sudo ./install.sh                 # auto-detect 8GB→64GB or 10GB→40GB
-#    sudo ./install.sh --profile=8gb   # force 8GB card / 64GB unlock
-#    sudo ./install.sh --profile=10gb  # force 10GB card / 40GB unlock
-#############################################################################
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mapfile -t SUPPORTED_VERSIONS < <(grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' "${SCRIPT_DIR}/driver/VERSION")
 SUPPORTED_VERSIONS_CSV="$(IFS=', '; echo "${SUPPORTED_VERSIONS[*]}")"
@@ -73,7 +64,6 @@ detect_card_profile() {
         return 1
     fi
 
-    # Allow already-unlocked cards to reinstall the matching profile.
     if (( mem_mib >= 60000 )); then
         echo "8gb"
         return 0
@@ -82,7 +72,6 @@ detect_card_profile() {
         echo "10gb"
         return 0
     fi
-    # Stock sizes (±512 MiB tolerance for reserved FB)
     if (( mem_mib >= 7680 && mem_mib <= 8704 )); then
         echo "8gb"
         return 0
