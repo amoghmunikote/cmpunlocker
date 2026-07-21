@@ -2,7 +2,7 @@
 
 Unlock tool for the NVIDIA CMP 170HX (GA100) mining card. Restores full SM compute throughput and unlocked HBM2e memory geometry that are restricted in firmware/OTP configuration.
 
-Targets **nvidia-open driver 610.43.0x** on Linux. cmpunlocker does **not** install the full NVIDIA userspace package — it patches and installs open kernel modules only.
+Targets **nvidia-open driver 610.43.0x, 595.71.05, 590.48.01, and 580.105.08** on Linux. cmpunlocker does **not** install the full NVIDIA userspace package — it patches and installs open kernel modules only.
 
 **[Join our Discord community](https://discord.gg/CdHSakKSFv)** for support and discussions.
 
@@ -40,11 +40,13 @@ Below are memory and performance results after applying the unlock:
 - Linux (x86-64)
 - Root access
 - NVIDIA CMP 170HX
-- **nvidia-open 610.43.0x already installed** (libs + firmware)
+- **nvidia-open already installed** (libs + firmware) at one of: 610.43.03, 610.43.02, 595.71.05, 590.48.01, 580.105.08
 - Kernel headers matching the running kernel (`linux-headers-$(uname -r)` / `kernel-devel`)
 - Secure Boot disabled (patched modules are unsigned)
 - Network access on first install (downloads matching stock `open-gpu-kernel-modules` sources)
 - Python 3 (used at build time to select 8GB/10GB geometry)
+
+595.71.05, 590.48.01, and 580.105.08 are source-verified (patches apply cleanly and the unlock logic matches the 610.43.0x path) but have not yet been boot-tested on physical CMP 170HX hardware.
 
 ---
 

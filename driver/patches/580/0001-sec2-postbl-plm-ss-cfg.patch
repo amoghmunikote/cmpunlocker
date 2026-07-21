@@ -1,0 +1,464 @@
+diff -Naur a/src/nvidia/generated/g_kernel_gsp_nvoc.h b/src/nvidia/generated/g_kernel_gsp_nvoc.h
+--- a/src/nvidia/generated/g_kernel_gsp_nvoc.h
++++ b/src/nvidia/generated/g_kernel_gsp_nvoc.h
+@@ -524,6 +524,8 @@
+     RM_RISCV_UCODE_DESC *pGspRmBootUcodeDesc;
+     MEMORY_DESCRIPTOR *pGspUCodeRadix3Descriptor;
+     MEMORY_DESCRIPTOR *pSignatureMemdesc;
++    NvU8 *pStockSignatureData;
++    NvU64 stockSignatureSize;
+     LIBOS_LOG_DECODE logDecode;
+     LIBOS_LOG_DECODE logDecodeVgpuPartition[48];
+     RM_LIBOS_LOG_MEM rmLibosLogMem[7];
+diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -97,6 +97,24 @@
+ 
+ #include "crashcat/crashcat_report.h"
+ 
++#define SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID   0x20C2
++#define SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID 0x2082
++#define SEC2_POSTBL_TIMING_SIGNATURE_SIZE          0x0000f800ULL
++#define SEC2_POSTBL_TIMING_FILL_DWORD              0x000004a7U
++#define SEC2_POSTBL_TIMING_DMEM_PATH               "/lib/firmware/nvidia/ga100/gsp/dmem.bin"
++
++NV_STATUS kgspSec2PostblTimingRefillPayload(OBJGPU *pGpu, KernelGsp *pKernelGsp,
++                                           NvU32 writeAddr, NvU32 writeValue);
++NV_STATUS kgspSec2PostblTimingRebuildStockSignature(OBJGPU *pGpu, KernelGsp *pKernelGsp);
++
++static NvBool
++_kgspSec2PostblTimingEnabled(OBJGPU *pGpu)
++{
++    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++    return (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
++            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID);
++}
++
+ #define RPC_HDR  ((rpc_message_header_v*)(pRpc->message_buffer))
+ 
+ struct MIG_CI_UPDATE_CALLBACK_PARAMS
+@@ -3835,14 +3853,22 @@
+     if (kgspIsWpr2Up_HAL(pGpu, pKernelGsp) &&
+         (!pGpu->getProperty(pGpu, PDB_PROP_GPU_PREINITIALIZED_WPR_REGION)))
+     {
+-        NV_PRINTF(LEVEL_ERROR, "unexpected WPR2 already up, cannot proceed with booting GSP\n");
+-        NV_PRINTF(LEVEL_ERROR, "(the GPU is likely in a bad state and may need to be reset)\n");
+-        return NV_ERR_INVALID_STATE;
++        NV_PRINTF(LEVEL_WARNING,
++                  "WPR2 already up before GSP boot; continuing for recovery\n");
+     }
+ 
+-    // Populate WPR meta structure (requires knowing FB size on dGPU, which depends on GFW_BOOT)
+     NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPopulateWprMeta_HAL(pGpu, pKernelGsp, pGspFw));
+ 
++    if (_kgspSec2PostblTimingEnabled(pGpu))
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: WPR meta fbSize=0x%016llx wprEnd=0x%016llx "
++                  "heapSize=0x%016llx\n",
++                  pKernelGsp->pWprMeta->fbSize,
++                  pKernelGsp->pWprMeta->gspFwWprEnd,
++                  pKernelGsp->pWprMeta->gspFwHeapSize);
++    }
++
+     {
+         // If the new FB layout requires a scrubber ucode to scrub additional space, prepare it now
+         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, _kgspPrepareScrubberImageIfNeeded(pGpu, pKernelGsp));
+@@ -3851,6 +3877,117 @@
+     // Setup arguments for bootstrapping GSP
+     NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPrepareForBootstrap_HAL(pGpu, pKernelGsp, KGSP_BOOT_MODE_NORMAL));
+ 
++    if (_kgspSec2PostblTimingEnabled(pGpu))
++    {
++        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++        NvU32 plmIdx, attempt;
++        NV_STATUS plmStatus;
++
++        static const struct { NvU32 addr; NvU32 value; const char *name; } plmTable[] = {
++            { 0x001fa7ccU, 0xfffff0ffU, "WPR_CFG" },
++            { 0x009a0148U, 0xffffffffU, "FBPA" },
++            { 0x001fa7c4U, 0xffffffffU, "WPR" },
++            { 0x00823804U, 0xffffffffU, "FEAT" },
++        };
++
++        NvU32 wpr2Lo = GPU_REG_RD32(pGpu, 0x001fa824U);
++        NvU32 wpr2Hi = GPU_REG_RD32(pGpu, 0x001fa828U);
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: saved WPR2 lo=0x%08x hi=0x%08x\n",
++                  wpr2Lo, wpr2Hi);
++
++        for (plmIdx = 0; plmIdx < 4; plmIdx++)
++        {
++            NvBool opened = NV_FALSE;
++            for (attempt = 0; attempt < 2 && !opened; attempt++)
++            {
++                GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
++                GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
++
++                plmStatus = kgspSec2PostblTimingRefillPayload(pGpu, pKernelGsp,
++                    plmTable[plmIdx].addr, plmTable[plmIdx].value);
++                if (plmStatus != NV_OK)
++                    continue;
++
++                plmStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
++                    memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++
++                NvU32 regVal = GPU_REG_RD32(pGpu, plmTable[plmIdx].addr);
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: PLM[%u] %s(0x%x) attempt=%u status=0x%x reg=0x%08x\n",
++                          plmIdx, plmTable[plmIdx].name,
++                          plmTable[plmIdx].addr, attempt, plmStatus, regVal);
++
++                if (regVal == plmTable[plmIdx].value)
++                    opened = NV_TRUE;
++            }
++            if (!opened)
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: FAILED to open %s after 2 attempts\n",
++                          plmTable[plmIdx].name);
++        }
++
++        GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
++        GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
++
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: PLMs: FEAT=0x%08x FBPA=0x%08x WPR=0x%08x WPR_CFG=0x%08x\n",
++                  GPU_REG_RD32(pGpu, 0x00823804U),
++                  GPU_REG_RD32(pGpu, 0x009a0148U),
++                  GPU_REG_RD32(pGpu, 0x001fa7c4U),
++                  GPU_REG_RD32(pGpu, 0x001fa7ccU));
++
++        {
++            NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++            NvU32 cfg1Value;
++            NvU32 lmrValue;
++
++            if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
++            {
++                cfg1Value = 0x02779000U;  // 8GB card: 64GB unlock
++                lmrValue  = 0x0000020BU;
++            }
++            else
++            {
++                cfg1Value = 0x02669000U;  // 10GB card: 40GB unlock
++                lmrValue  = 0x0000028AU;
++            }
++
++            GPU_REG_WR32(pGpu, 0x0082381cU, 0x88888888U);
++            GPU_REG_WR32(pGpu, 0x00823820U, 0x00000008U);
++            GPU_REG_WR32(pGpu, 0x009a0204U, cfg1Value);
++            GPU_REG_WR32(pGpu, 0x00100ce0U, lmrValue);
++
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: POST-WRITE SS0=0x%08x SS1=0x%08x "
++                      "CFG1=0x%08x LMR=0x%08x (devId=0x%x)\n",
++                      GPU_REG_RD32(pGpu, 0x0082381cU),
++                      GPU_REG_RD32(pGpu, 0x00823820U),
++                      GPU_REG_RD32(pGpu, 0x009a0204U),
++                      GPU_REG_RD32(pGpu, 0x00100ce0U),
++                      devId);
++        }
++
++        plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
++        if (plmStatus != NV_OK)
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: rebuild stock signature failed: 0x%x\n", plmStatus);
++            return plmStatus;
++        }
++
++        NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPopulateWprMeta_HAL(pGpu, pKernelGsp, pGspFw));
++
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: WPR meta updated fbSize=0x%016llx wprStart=0x%016llx "
++                  "wprEnd=0x%016llx heapOffset=0x%016llx heapSize=0x%016llx\n",
++                  pKernelGsp->pWprMeta->fbSize,
++                  pKernelGsp->pWprMeta->gspFwWprStart,
++                  pKernelGsp->pWprMeta->gspFwWprEnd,
++                  pKernelGsp->pWprMeta->gspFwHeapOffset,
++                  pKernelGsp->pWprMeta->gspFwHeapSize);
++    }
++
+     // Release the API lock if relaxed locking for parallel init is enabled
+     NvBool bRelaxedLocking = _kgspShouldRelaxGspInitLocking(pGpu);
+     if (bRelaxedLocking)
+@@ -4198,6 +4335,53 @@
+         goto done;
+     }
+ 
++    {
++        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++        if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
++            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID)
++        {
++            GspStaticConfigInfo *pGSCI = &pKernelGsp->gspStaticInfo;
++            NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_PARAMS *pFbRegionInfoParams =
++                &pGSCI->fbRegionInfoParams;
++            NvU64 targetFbBytes = (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
++                                    ? 0x0000001000000000ULL   /* 64GB for 8GB card */
++                                    : 0x0000000A00000000ULL;  /* 40GB for 10GB card */
++            NvU64 stockFbBytes  = 0x0000000200000000ULL;  /* 8GB */
++            NvU32 numRegions = pFbRegionInfoParams->numFBRegions;
++
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: static-info BEFORE: fb_length=0x%llx numRegions=%u\n",
++                      pGSCI->fb_length, numRegions);
++
++            pGSCI->fb_length = targetFbBytes;
++
++            if (numRegions > 0 &&
++                numRegions <= NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_MAX_ENTRIES)
++            {
++                NV2080_CTRL_CMD_FB_GET_FB_REGION_FB_REGION_INFO *pLastRegion =
++                    &pFbRegionInfoParams->fbRegion[numRegions - 1];
++                NvU64 highLimit = targetFbBytes - 1;
++
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: last region[%u] base=0x%llx limit=0x%llx reserved=0x%llx\n",
++                          numRegions - 1, pLastRegion->base, pLastRegion->limit, pLastRegion->reserved);
++
++                if (pLastRegion->limit < highLimit)
++                {
++                    pLastRegion->limit = highLimit;
++                    pLastRegion->reserved = pLastRegion->limit - pLastRegion->base + 1;
++                    pLastRegion->supportCompressed = NV_TRUE;
++                    pLastRegion->supportISO = NV_TRUE;
++                    pLastRegion->performance = 20;
++                }
++
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: static-info AFTER: fb_length=0x%llx last_limit=0x%llx\n",
++                          pGSCI->fb_length, pLastRegion->limit);
++            }
++        }
++    }
++
+     NV_ASSERT_OK_OR_GOTO(status, kgspInitGspTraceCrashBuffer(pGpu, pKernelGsp), done);
+ 
+     // Set PDB properties as per data from GSP.
+@@ -4604,6 +4788,84 @@
+     pKernelGsp->gspRmBootUcodeSize   = 0;
+ }
+ 
++static void
++_kgspSec2PostblTimingPutU32(NvU8 *pBuffer, NvU32 offset, NvU32 value)
++{
++    pBuffer[offset + 0] = (NvU8)(value >>  0);
++    pBuffer[offset + 1] = (NvU8)(value >>  8);
++    pBuffer[offset + 2] = (NvU8)(value >> 16);
++    pBuffer[offset + 3] = (NvU8)(value >> 24);
++}
++
++static void
++_kgspSec2PostblTimingFillPayload(NvU8 *pSignatureVa, NvU64 signatureSize,
++                                NvU32 writeAddr, NvU32 writeValue)
++{
++    NvU64 i;
++
++    for (i = 0; i + sizeof(NvU32) <= signatureSize; i += sizeof(NvU32))
++        _kgspSec2PostblTimingPutU32(pSignatureVa, (NvU32)i, SEC2_POSTBL_TIMING_FILL_DWORD);
++
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0x1100, 0x00000007U);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0x5b40, 0xc0deca7eU);
++
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf754, writeValue);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf758, 0xc0deca7eU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf75c, 0x00000cbdU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf76c, writeAddr);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf774, 0x00001fbdU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf780, 0x00000000U);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf788, 0x000010aaU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf78c, 0x0000815aU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf790, 0x00008e18U);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf794, 0xc0deca7eU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf798, 0x0000815aU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf79c, 0x00000000U);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7a0, 0xc0deca7eU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7a4, 0x00001fbdU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7b0, 0x0000ffbcU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7b8, 0x0000582dU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7c4, 0xc0deca7eU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7c8, 0x00000cbdU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7d8, 0x00000003U);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7e0, 0x00001fbdU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7f4, 0x00000ccbU);
++    _kgspSec2PostblTimingPutU32(pSignatureVa, 0xf7f8, 0x00007f2fU);
++}
++
++NV_STATUS
++kgspSec2PostblTimingRefillPayload(OBJGPU *pGpu, KernelGsp *pKernelGsp,
++                                 NvU32 writeAddr, NvU32 writeValue)
++{
++    NvU8 *pSignatureVa;
++
++    if (pKernelGsp->pSignatureMemdesc == NULL)
++        return NV_ERR_INVALID_STATE;
++
++    pSignatureVa = memdescMapInternal(pGpu, pKernelGsp->pSignatureMemdesc, TRANSFER_FLAGS_NONE);
++    if (pSignatureVa == NULL)
++        return NV_ERR_INSUFFICIENT_RESOURCES;
++
++    _kgspSec2PostblTimingFillPayload(pSignatureVa,
++        memdescGetSize(pKernelGsp->pSignatureMemdesc), writeAddr, writeValue);
++
++    memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
++    memdescFlushCpuCaches(pGpu, pKernelGsp->pSignatureMemdesc);
++
++    if (pKernelGsp->pWprMeta != NULL)
++    {
++        pKernelGsp->pWprMeta->sysmemAddrOfSignature =
++            memdescGetPhysAddr(pKernelGsp->pSignatureMemdesc, AT_GPU, 0);
++        pKernelGsp->pWprMeta->sizeOfSignature =
++            memdescGetSize(pKernelGsp->pSignatureMemdesc);
++    }
++
++    if (pKernelGsp->pWprMetaDescriptor != NULL)
++        memdescFlushCpuCaches(pGpu, pKernelGsp->pWprMetaDescriptor);
++
++    return NV_OK;
++}
++
+ static NV_STATUS
+ _kgspCreateSignatureMemdesc
+ (
+@@ -4614,6 +4876,9 @@
+ {
+     NV_STATUS status = NV_OK;
+     NvU8 *pSignatureVa = NULL;
++    NvBool bPostbl = _kgspSec2PostblTimingEnabled(pGpu);
++    NvU64 sigSize = bPostbl ? SEC2_POSTBL_TIMING_SIGNATURE_SIZE
++                            : NV_ALIGN_UP(pGspFw->signatureSize, 256);
+     NvU64 flags = MEMDESC_FLAGS_NONE;
+ 
+     flags |= MEMDESC_FLAGS_ALLOC_IN_UNPROTECTED_MEMORY;
+@@ -4621,7 +4886,7 @@
+     // NOTE: align to 256 because that's the alignment needed for Booter DMA
+     NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
+         memdescCreate(&pKernelGsp->pSignatureMemdesc, pGpu,
+-            NV_ALIGN_UP(pGspFw->signatureSize, 256), 256,
++            sigSize, 256,
+             NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags));
+ 
+     memdescTagAlloc(status,
+@@ -4633,8 +4898,48 @@
+         (pSignatureVa != NULL) ? NV_OK : NV_ERR_INSUFFICIENT_RESOURCES,
+         fail_alloc);
+ 
+-    portMemCopy(pSignatureVa, memdescGetSize(pKernelGsp->pSignatureMemdesc),
+-        pGspFw->pSignatureData, pGspFw->signatureSize);
++    if (bPostbl)
++    {
++        NV_STATUS dmemStatus;
++
++        if (pGspFw->pSignatureData != NULL && pGspFw->signatureSize > 0)
++        {
++            pKernelGsp->stockSignatureSize = pGspFw->signatureSize;
++            pKernelGsp->pStockSignatureData = portMemAllocNonPaged(pGspFw->signatureSize);
++            if (pKernelGsp->pStockSignatureData != NULL)
++            {
++                portMemCopy(pKernelGsp->pStockSignatureData, pGspFw->signatureSize,
++                            pGspFw->pSignatureData, pGspFw->signatureSize);
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: saved stock signature (%llu bytes)\n",
++                          (unsigned long long)pGspFw->signatureSize);
++            }
++        }
++
++        dmemStatus = os_open_and_read_file(
++            SEC2_POSTBL_TIMING_DMEM_PATH, pSignatureVa, sigSize);
++        if (dmemStatus == NV_OK)
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: loaded %llu bytes from %s\n",
++                      (unsigned long long)sigSize, SEC2_POSTBL_TIMING_DMEM_PATH);
++        }
++        else
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: %s not found (0x%x), using built-in payload\n",
++                      SEC2_POSTBL_TIMING_DMEM_PATH, dmemStatus);
++            _kgspSec2PostblTimingFillPayload(pSignatureVa,
++                memdescGetSize(pKernelGsp->pSignatureMemdesc),
++                0x009a0148U, 0xffffffffU);
++        }
++        memdescFlushCpuCaches(pGpu, pKernelGsp->pSignatureMemdesc);
++    }
++    else
++    {
++        portMemCopy(pSignatureVa, memdescGetSize(pKernelGsp->pSignatureMemdesc),
++            pGspFw->pSignatureData, pGspFw->signatureSize);
++    }
+ 
+     memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
+     pSignatureVa = NULL;
+@@ -4648,6 +4953,69 @@
+     memdescDestroy(pKernelGsp->pSignatureMemdesc);
+     pKernelGsp->pSignatureMemdesc = NULL;
+ 
++    return status;
++}
++
++NV_STATUS
++kgspSec2PostblTimingRebuildStockSignature(OBJGPU *pGpu, KernelGsp *pKernelGsp)
++{
++    NV_STATUS status = NV_OK;
++    NvU8 *pSignatureVa = NULL;
++    NvU64 sigSize;
++    NvU64 flags = MEMDESC_FLAGS_NONE;
++
++    if (pKernelGsp->pStockSignatureData == NULL || pKernelGsp->stockSignatureSize == 0)
++        return NV_ERR_INVALID_STATE;
++
++    if (pKernelGsp->pSignatureMemdesc != NULL)
++    {
++        memdescFree(pKernelGsp->pSignatureMemdesc);
++        memdescDestroy(pKernelGsp->pSignatureMemdesc);
++        pKernelGsp->pSignatureMemdesc = NULL;
++    }
++
++    sigSize = NV_ALIGN_UP(pKernelGsp->stockSignatureSize, 256);
++    flags |= MEMDESC_FLAGS_ALLOC_IN_UNPROTECTED_MEMORY;
++
++    NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
++        memdescCreate(&pKernelGsp->pSignatureMemdesc, pGpu,
++            sigSize, 256,
++            NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags));
++
++    memdescTagAlloc(status,
++            NV_FB_ALLOC_RM_INTERNAL_OWNER_UNNAMED_TAG_16, pKernelGsp->pSignatureMemdesc);
++    NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR, status, rebuild_fail_create);
++
++    pSignatureVa = memdescMapInternal(pGpu, pKernelGsp->pSignatureMemdesc, TRANSFER_FLAGS_NONE);
++    NV_CHECK_OK_OR_GOTO(status, LEVEL_ERROR,
++        (pSignatureVa != NULL) ? NV_OK : NV_ERR_INSUFFICIENT_RESOURCES,
++        rebuild_fail_alloc);
++
++    portMemCopy(pSignatureVa, memdescGetSize(pKernelGsp->pSignatureMemdesc),
++                pKernelGsp->pStockSignatureData, pKernelGsp->stockSignatureSize);
++
++    memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
++
++    if (pKernelGsp->pWprMeta != NULL)
++    {
++        pKernelGsp->pWprMeta->sysmemAddrOfSignature =
++            memdescGetPhysAddr(pKernelGsp->pSignatureMemdesc, AT_GPU, 0);
++        pKernelGsp->pWprMeta->sizeOfSignature =
++            memdescGetSize(pKernelGsp->pSignatureMemdesc);
++    }
++
++    if (pKernelGsp->pWprMetaDescriptor != NULL)
++        memdescFlushCpuCaches(pGpu, pKernelGsp->pWprMetaDescriptor);
++
++    return NV_OK;
++
++rebuild_fail_alloc:
++    memdescFree(pKernelGsp->pSignatureMemdesc);
++
++rebuild_fail_create:
++    memdescDestroy(pKernelGsp->pSignatureMemdesc);
++    pKernelGsp->pSignatureMemdesc = NULL;
++
+     return status;
+ }
+ 

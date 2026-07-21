@@ -1,0 +1,19 @@
+diff -Naur a/kernel-open/nvidia/nv.c b/kernel-open/nvidia/nv.c
+--- a/kernel-open/nvidia/nv.c
++++ b/kernel-open/nvidia/nv.c
+@@ -1531,6 +1531,15 @@
+         goto failed_release_irq;
+     }
+ 
++    if (nv->pci_info.device_id == 0x20C2)
++    {
++        nv->flags |= NV_FLAG_PERSISTENT_SW_STATE;
++    }
++    else if (nv->pci_info.device_id == 0x2082)
++    {
++        nv->flags |= NV_FLAG_PERSISTENT_SW_STATE;
++    }
++
+     /* Generate and cache the UUID for future callers */
+     (void)rm_get_gpu_uuid_raw(sp, nv);
+ 

@@ -1,0 +1,20 @@
+diff -Naur a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c
+--- a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c	2026-07-18 11:26:26.890781209 -0700
++++ b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c	2026-07-18 11:26:26.891976131 -0700
+@@ -220,6 +220,16 @@
+     else
+     {
+         offsetBar0 = (pMemoryManager->Ram.fbAddrSpaceSizeMb << 20) - DRF_SIZE(NV_PRAMIN);
++
++        {
++            NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++            if ((devId == 0x20C2 || devId == 0x2082) &&
++                pMemoryManager->Ram.fbAddrSpaceSizeMb > 0x2000)
++            {
++                NvU64 stockOffset = (0x2000ULL << 20) - DRF_SIZE(NV_PRAMIN);
++                offsetBar0 = stockOffset;
++            }
++        }
+     }
+ 
+     //
