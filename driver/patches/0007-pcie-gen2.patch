@@ -1,0 +1,268 @@
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -4942,6 +4942,286 @@
+                       devId);
+         }
+ 
++
++        {
++            #define PCIE_GEN2_LINK_CAP_ADDR         0x00088084U
++            #define PCIE_GEN2_LINK_CAP2_ADDR        0x000880a4U
++            #define PCIE_GEN2_LINK_CTRL_2_ADDR      0x000880a8U
++            #define PCIE_GEN2_LINK_CTRL_STATUS_ADDR 0x00088088U
++            #define PCIE_GEN2_PL_LINK_RATE_ADDR     0x0008c1c0U
++            #define PCIE_GEN2_LTSSM_ADDR            0x0008872cU
++            #define PCIE_GEN2_VSEC_DEVICE_ADDR      0x0008860cU
++            #define PCIE_GEN2_VSEC_HIERARCHY_ADDR   0x00088610U
++            #define PCIE_GEN2_XP3G_OVR_BASE         0x0008e110U
++            #define PCIE_GEN2_XP3G_VAL_BASE         0x0008e120U
++            #define PCIE_GEN2_XP3G_STATUS_BASE      0x0008e100U
++            #define PCIE_GEN2_OPT_GEN23_ADDR        0x0082057cU
++            #define PCIE_GEN2_OPT_GEN3_ADDR         0x00820580U
++            #define PCIE_GEN2_OPT_MAGIC_ADDR        0x00820520U
++            #define PCIE_LINK_SPEED_OF(stat)        (((stat) >> 16) & 0xFU)
++            const NvU32 PCIE_GEN2_LINK_SPEED = 0x00000002U;
++            const NvU32 PCIE_GEN2_PL_LINK_RATE_VALUE = 0x00240036U;
++
++            NvU32 capBefore = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP_ADDR);
++            NvU32 statBefore = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CTRL_STATUS_ADDR);
++            NvU32 vsecDev = GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_DEVICE_ADDR);
++            NvU32 vsecHier = GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_HIERARCHY_ADDR);
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: PCIe pre  CAP=0x%08x CAP2=0x%08x LC2=0x%08x PL=0x%08x "
++                      "STAT=0x%08x VSEC dev=0x%08x hier=0x%08x OPT=%08x/%08x/%08x "
++                      "XP3G st0=0x%08x ovr0=0x%08x val0=0x%08x "
++                      "st3=0x%08x ovr3=0x%08x val3=0x%08x speed=%u\n",
++                      capBefore,
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP2_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CTRL_2_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_PL_LINK_RATE_ADDR),
++                      statBefore,
++                      vsecDev,
++                      vsecHier,
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_OPT_GEN23_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_OPT_GEN3_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_OPT_MAGIC_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_STATUS_BASE),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_OVR_BASE),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_VAL_BASE),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_STATUS_BASE + 0xCU),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_OVR_BASE + 0xCU),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_VAL_BASE + 0xCU),
++                      PCIE_LINK_SPEED_OF(statBefore));
++
++            {
++                static const struct { NvU32 addr; NvU32 value; const char *name; } xp3gTable[] = {
++                    { 0x0008e1b0U, 0xffffffffU, "XP3G_PLM" },
++                    { 0x00088fe8U, 0xffffffffU, "XVE_D0" },
++                    { 0x00088fecU, 0xffffffffU, "XVE_D4" },
++                    { 0x00088ff0U, 0xffffffffU, "XVE_D8" },
++
++                    { 0x008200d0U, 0xffffffffU, "OPTB_D0" },
++                    { 0x008200d4U, 0xffffffffU, "OPTB_D4" },
++                    { 0x008200d8U, 0xffffffffU, "OPTB_D8" },
++                    { 0x008200dcU, 0xffffffffU, "OPTB_DC" },
++                    { 0x008200e0U, 0xffffffffU, "OPTB_E0" },
++                    { 0x008200e4U, 0xffffffffU, "OPTB_E4" },
++                    { 0x008200e8U, 0xffffffffU, "OPTB_E8" },
++                    { 0x008200ecU, 0xffffffffU, "OPTB_EC" },
++                    { 0x008200f0U, 0xffffffffU, "OPTB_F0" },
++                    { 0x008200f4U, 0xffffffffU, "OPTB_F4" },
++                    { 0x00823800U, 0xffffffffU, "FEAT_OVR_ECC_PLM" },
++                    { 0x0082057cU, 0x00000000U, "OPT_GEN23" },
++                    { 0x0008e120U, 0x00000000U, "XP3G_VAL0" },
++                    { 0x0008e110U, 0x00000004U, "XP3G_OVR0" },
++                    { 0x0008e12cU, 0x00200000U, "XP3G_VAL3" },
++                    { 0x0008e11cU, 0x00000004U, "XP3G_OVR3" },
++                };
++                NvU32 xi, xattempt;
++                NV_STATUS xpStatus;
++                const NvU32 xp3gCount = sizeof(xp3gTable) / sizeof(xp3gTable[0]);
++                #define PCIE_GEN2_PRIV_MISC_1_ADDR     0x0008841cU
++                #define PCIE_GEN2_PRIV_MISC_1_GEN2_EN  ((1U << 11) | (1U << 13))
++                #define PCIE_GEN2_PRIV_MISC_1_GEN2_VAL ((1U << 12) | (1U << 14))
++
++                for (xi = 0; xi < xp3gCount; xi++)
++                {
++                    NvBool wrote = NV_FALSE;
++                    for (xattempt = 0; xattempt < 2 && !wrote; xattempt++)
++                    {
++                        GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
++                        GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
++
++                        xpStatus = kgspSec2PostblTimingRefillPayload(pGpu, pKernelGsp,
++                            xp3gTable[xi].addr, xp3gTable[xi].value);
++                        if (xpStatus != NV_OK)
++                            continue;
++
++                        xpStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
++                            memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++
++                        NvU32 tgtRd = GPU_REG_RD32(pGpu, xp3gTable[xi].addr);
++                        NvU32 ovr0Rd = GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_OVR_BASE);
++                        NvU32 val0Rd = GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_VAL_BASE);
++                        NvU32 ovr3Rd = GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_OVR_BASE + 0xCU);
++                        NvU32 val3Rd = GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_VAL_BASE + 0xCU);
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "SEC2_DEBUG: PCIe xp3g booter %s(0x%x)=0x%08x attempt=%u "
++                                  "status=0x%x rd=0x%08x OVR0=0x%08x VAL0=0x%08x "
++                                  "OVR3=0x%08x VAL3=0x%08x\n",
++                                  xp3gTable[xi].name, xp3gTable[xi].addr,
++                                  xp3gTable[xi].value, xattempt, xpStatus,
++                                  tgtRd, ovr0Rd, val0Rd, ovr3Rd, val3Rd);
++                        if (tgtRd == xp3gTable[xi].value)
++                            wrote = NV_TRUE;
++                    }
++                    if (!wrote)
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "SEC2_DEBUG: PCIe xp3g booter FAILED to set %s\n",
++                                  xp3gTable[xi].name);
++                }
++
++                {
++                    NvU32 capNow = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP_ADDR);
++                    NvU32 cap2Now = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP2_ADDR);
++                    NvU32 opt23Now = GPU_REG_RD32(pGpu, 0x0082057cU);
++                    NvU32 plmXp = GPU_REG_RD32(pGpu, 0x0008e1b0U);
++                    NV_PRINTF(LEVEL_ERROR,
++                              "SEC2_DEBUG: PCIe Cap oracle CAP=0x%08x CAP2=0x%08x "
++                              "OPT_GEN23=0x%08x XP3G_PLM=0x%08x\n",
++                              capNow, cap2Now, opt23Now, plmXp);
++                }
++
++                {
++                    NvU32 vsecDevNow = GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_DEVICE_ADDR);
++                    NvU32 vsecDevWant = vsecDevNow | (1U << 0);
++                    NvBool wrote = NV_FALSE;
++                    NV_PRINTF(LEVEL_ERROR,
++                              "SEC2_DEBUG: PCIe VSEC_DEVICE pre=0x%08x want=0x%08x\n",
++                              vsecDevNow, vsecDevWant);
++                    for (xattempt = 0; xattempt < 2 && !wrote; xattempt++)
++                    {
++                        GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
++                        GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
++                        xpStatus = kgspSec2PostblTimingRefillPayload(pGpu, pKernelGsp,
++                            PCIE_GEN2_VSEC_DEVICE_ADDR, vsecDevWant);
++                        if (xpStatus != NV_OK)
++                            continue;
++                        xpStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
++                            memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++                        NvU32 rd = GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_DEVICE_ADDR);
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "SEC2_DEBUG: PCIe VSEC_DEVICE booter attempt=%u "
++                                  "status=0x%x rd=0x%08x\n",
++                                  xattempt, xpStatus, rd);
++                        if (rd == vsecDevWant)
++                            wrote = NV_TRUE;
++                    }
++                    if (!wrote)
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "SEC2_DEBUG: PCIe VSEC_DEVICE booter FAILED\n");
++                }
++
++                {
++                    NvU32 misc1 = GPU_REG_RD32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR);
++                    NvU32 misc1Want = (misc1 | PCIE_GEN2_PRIV_MISC_1_GEN2_EN)
++                                      & ~PCIE_GEN2_PRIV_MISC_1_GEN2_VAL;
++                    NvBool wrote = NV_FALSE;
++                    NV_PRINTF(LEVEL_ERROR,
++                              "SEC2_DEBUG: PCIe PRIV_MISC_1 pre=0x%08x want=0x%08x\n",
++                              misc1, misc1Want);
++                    for (xattempt = 0; xattempt < 2 && !wrote; xattempt++)
++                    {
++                        GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
++                        GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
++                        xpStatus = kgspSec2PostblTimingRefillPayload(pGpu, pKernelGsp,
++                            PCIE_GEN2_PRIV_MISC_1_ADDR, misc1Want);
++                        if (xpStatus != NV_OK)
++                            continue;
++                        xpStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
++                            memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++                        NvU32 rd = GPU_REG_RD32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR);
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "SEC2_DEBUG: PCIe PRIV_MISC_1 booter attempt=%u "
++                                  "status=0x%x rd=0x%08x\n",
++                                  xattempt, xpStatus, rd);
++                        if (rd == misc1Want)
++                            wrote = NV_TRUE;
++                    }
++                    if (!wrote)
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "SEC2_DEBUG: PCIe PRIV_MISC_1 booter FAILED\n");
++                }
++
++                GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
++                GPU_REG_WR32(pGpu, 0x001fa828U, wpr2Hi);
++            }
++
++            {
++                NvU32 hier = GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_HIERARCHY_ADDR);
++                hier = (hier & ~(1U << 12)) | (1U << 0);
++                GPU_REG_WR32(pGpu, PCIE_GEN2_VSEC_HIERARCHY_ADDR, hier);
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: PCIe vsec hierarchy=0x%08x device=0x%08x\n",
++                          GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_HIERARCHY_ADDR),
++                          GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_DEVICE_ADDR));
++            }
++
++            {
++                GPU_REG_WR32(pGpu, PCIE_GEN2_LINK_CTRL_2_ADDR, 0x001f0002U);
++                GPU_REG_WR32(pGpu, PCIE_GEN2_PL_LINK_RATE_ADDR, PCIE_GEN2_PL_LINK_RATE_VALUE);
++                GPU_REG_WR32(pGpu, PCIE_GEN2_LTSSM_ADDR, 0x00000006U);
++            }
++
++            NvU32 statAfter = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CTRL_STATUS_ADDR);
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: PCIe retrain done CAP=0x%08x CAP2=0x%08x LC2=0x%08x "
++                      "PL=0x%08x STAT=0x%08x hier=0x%08x dev=0x%08x OPT=%08x/%08x/%08x "
++                      "XP3G ovr0=0x%08x val0=0x%08x ovr3=0x%08x val3=0x%08x "
++                      "MISC1=0x%08x speed=%u\n",
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP2_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CTRL_2_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_PL_LINK_RATE_ADDR),
++                      statAfter,
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_HIERARCHY_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_DEVICE_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_OPT_GEN23_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_OPT_GEN3_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_OPT_MAGIC_ADDR),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_OVR_BASE),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_VAL_BASE),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_OVR_BASE + 0xCU),
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_VAL_BASE + 0xCU),
++                      GPU_REG_RD32(pGpu, 0x0008841cU),
++                      PCIE_LINK_SPEED_OF(statAfter));
++        }
++
+         plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
+         if (plmStatus != NV_OK)
+         {
+--- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
++++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
+@@ -611,6 +611,28 @@
+         }
+     }
+ 
++
++    {
++        NvU32 lateDevId = pGpu->idInfo.PCIDeviceID >> 16;
++        if ((lateDevId == 0x20C2 || lateDevId == 0x2082) && status == NV_OK)
++        {
++            #define PCIE_GEN2_PRIV_MISC_1_ADDR_LATE     0x0008841cU
++            #define PCIE_GEN2_PRIV_MISC_1_GEN2_EN_LATE  ((1U << 11) | (1U << 13))
++            #define PCIE_GEN2_PRIV_MISC_1_GEN2_VAL_LATE ((1U << 12) | (1U << 14))
++            NvU32 misc1Late = GPU_REG_RD32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR_LATE);
++            NvU32 misc1WantLate = (misc1Late | PCIE_GEN2_PRIV_MISC_1_GEN2_EN_LATE)
++                                  & ~PCIE_GEN2_PRIV_MISC_1_GEN2_VAL_LATE;
++            GPU_REG_WR32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR_LATE, misc1WantLate);
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: PCIe PRIV_MISC_1 late pre=0x%08x post=0x%08x\n",
++                      misc1Late,
++                      GPU_REG_RD32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR_LATE));
++        }
++    }
++
+     if (status != NV_OK)
+     {
+         NV_PRINTF(LEVEL_ERROR, "failed to execute Booter Load (ucode for initial boot): 0x%x\n", status);
