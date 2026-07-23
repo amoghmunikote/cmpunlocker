@@ -1,6 +1,6 @@
 --- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
-@@ -4942,6 +4942,286 @@
+@@ -4942,12 +4942,243 @@
                        devId);
          }
  
@@ -238,9 +238,15 @@
          plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
          if (plmStatus != NV_OK)
          {
+             NV_PRINTF(LEVEL_ERROR,
+                       "SEC2_DEBUG: rebuild stock signature failed: 0x%x\n", plmStatus);
+             return plmStatus;
+         }
+ 
+         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPopulateWprMeta_HAL(pGpu, pKernelGsp, pGspFw));
 --- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
-@@ -611,6 +611,28 @@
+@@ -611,6 +611,25 @@
          }
      }
  
