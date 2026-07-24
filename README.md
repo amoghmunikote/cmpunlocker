@@ -33,7 +33,7 @@ CMP 170HX 使用物理上完整的 GA100 芯片（与 A100 使用相同硅片）
 
 ### 性能测试（[OpenCL-Benchmark](https://github.com/ProjectPhysX/OpenCL-Benchmark)）
 
-<img alt="性能测试结果" src="https://github.com/user-attachments/assets/2501506d-420f-4014-9574-b1bd0290eb60" width="100%" style="max-width: 900px;" />
+<img alt="OpenCL 性能测试结果" src="assets/opencl-benchmark.png" width="100%" style="max-width: 900px;" />
 
 ---
 
