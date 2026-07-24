@@ -1,0 +1,9 @@
+# cmpunlocker — re-apply the PCIe Gen2 retrain whenever a driver (re)binds a
+# supported CMP card. A driver reload or GPU reset can drop the link back to
+# Gen1 without a PCI remove/add, so we trigger on the "bind" action and kick the
+# oneshot service (--no-block avoids blocking the udev worker; restart forces a
+# re-run even though the service is RemainAfterExit). The boot-time unit still
+# covers the normal cold start. See cmpunlocker-pcie-gen2.service.
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{device}=="0x20c2", RUN+="/usr/bin/systemctl --no-block restart cmpunlocker-pcie-gen2.service"
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{device}=="0x2082", RUN+="/usr/bin/systemctl --no-block restart cmpunlocker-pcie-gen2.service"
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{device}=="0x20b0", RUN+="/usr/bin/systemctl --no-block restart cmpunlocker-pcie-gen2.service"

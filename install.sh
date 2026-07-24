@@ -181,12 +181,63 @@ ok "NVIDIA driver ${detected} is supported"
 [[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). Install linux-headers-$(uname -r) or kernel-devel."
 ok "Kernel headers present for $(uname -r)"
 
-step "Step 5/6: Building and installing patched modules"
+step "Step 5/7: Building and installing patched modules"
 chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
-step "Step 6/6: Done"
+step "Step 6/7: Installing PCIe Gen2 retrain service"
+# The 170HX advertises PCIe Gen2 but trains at Gen1 until the link is retrained
+# from the upstream root port. That lives in PCIe config space and resets every
+# boot, so install a systemd oneshot to reapply it. Independent of the in-driver
+# unlock; it only touches link speed.
+PCIE_SRC="${SCRIPT_DIR}/common/cmpunlocker-pcie-gen2.sh"
+PCIE_BIN="/usr/local/sbin/cmpunlocker-pcie-gen2"
+PCIE_SERVICE="/etc/systemd/system/cmpunlocker-pcie-gen2.service"
+PCIE_RULES_SRC="${SCRIPT_DIR}/common/99-cmpunlocker-pcie-gen2.rules"
+PCIE_RULES="/etc/udev/rules.d/99-cmpunlocker-pcie-gen2.rules"
+if ! command -v setpci &>/dev/null; then
+    warn "setpci not found (pciutils) — skipping PCIe Gen2 service; link stays at Gen1"
+elif [[ ! -r "${PCIE_SRC}" ]]; then
+    warn "Missing ${PCIE_SRC} — skipping PCIe Gen2 service"
+else
+    install -m 0755 "${PCIE_SRC}" "${PCIE_BIN}"
+    ok "Installed ${PCIE_BIN}"
+    cat > "${PCIE_SERVICE}" <<EOF
+[Unit]
+Description=cmpunlocker PCIe Gen2 link retrain for CMP 170HX
+Documentation=https://github.com/eejohnso/cmpunlocker
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${PCIE_BIN}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    ok "Wrote ${PCIE_SERVICE}"
+    systemctl daemon-reload
+    systemctl enable cmpunlocker-pcie-gen2.service >/dev/null 2>&1 || true
+    if systemctl start cmpunlocker-pcie-gen2.service; then
+        ok "PCIe Gen2 retrain applied now and enabled at boot"
+    else
+        warn "PCIe Gen2 service enabled for boot, but immediate run failed — check: journalctl -u cmpunlocker-pcie-gen2"
+    fi
+    # udev rule re-applies the retrain when the driver rebinds (reload / reset),
+    # which does not produce a PCI remove/add event the boot unit would catch.
+    if [[ -r "${PCIE_RULES_SRC}" ]]; then
+        install -m 0644 "${PCIE_RULES_SRC}" "${PCIE_RULES}"
+        udevadm control --reload-rules 2>/dev/null || true
+        ok "Installed udev rule ${PCIE_RULES}"
+    else
+        warn "Missing ${PCIE_RULES_SRC} — driver-rebind retrain not installed"
+    fi
+fi
+
+step "Step 7/7: Done"
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║${NC}   ${GREEN}✓ cmpunlocker install finished${CYAN}       ║${NC}"
@@ -198,6 +249,7 @@ echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then p
 echo -e "  2. Verify memory: ${CYAN}nvidia-smi${NC}  (expect ~${EXPECTED_MIB} MiB)"
 echo -e "  3. Verify unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
 echo -e "  4. Verify SM clocks: ${CYAN}nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader${NC}"
+echo -e "  5. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current --format=csv,noheader${NC}  (expect 2)"
 echo ""
 echo "Log saved to: ${LOG_FILE}"
 echo ""

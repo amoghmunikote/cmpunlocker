@@ -34,6 +34,7 @@ echo ""
 if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     warn "This removes cmpunlocker patched kernel modules:"
     echo "  - Stops leftover cmpunlocker systemd service (if present)"
+    echo "  - Removes the cmpunlocker-pcie-gen2 retrain service + udev rule (card reverts to Gen1)"
     echo "  - Removes /lib/modules/*/updates/cmpunlocker/"
     echo "  - Removes /etc/depmod.d/zz-cmpunlocker.conf override"
     echo "  - Removes ${INSTALL_DIR} (legacy install dir, if present)"
@@ -72,6 +73,27 @@ if [[ -f "${SERVICE_FILE}" ]]; then
     ok "Removed ${SERVICE_FILE}"
 fi
 pkill -f "${INSTALL_DIR}/daemon/watchdog.py" 2>/dev/null || true
+
+PCIE_SERVICE_NAME="cmpunlocker-pcie-gen2"
+PCIE_SERVICE_FILE="/etc/systemd/system/${PCIE_SERVICE_NAME}.service"
+PCIE_BIN="/usr/local/sbin/cmpunlocker-pcie-gen2"
+if systemctl is-enabled --quiet "${PCIE_SERVICE_NAME}" 2>/dev/null; then
+    systemctl disable "${PCIE_SERVICE_NAME}" 2>/dev/null || true
+fi
+systemctl stop "${PCIE_SERVICE_NAME}" 2>/dev/null || true
+if [[ -f "${PCIE_SERVICE_FILE}" ]]; then
+    rm -f "${PCIE_SERVICE_FILE}"
+    systemctl daemon-reload
+    systemctl reset-failed "${PCIE_SERVICE_NAME}" 2>/dev/null || true
+    ok "Removed ${PCIE_SERVICE_FILE}"
+fi
+[[ -f "${PCIE_BIN}" ]] && { rm -f "${PCIE_BIN}"; ok "Removed ${PCIE_BIN}"; }
+PCIE_RULES="/etc/udev/rules.d/99-cmpunlocker-pcie-gen2.rules"
+if [[ -f "${PCIE_RULES}" ]]; then
+    rm -f "${PCIE_RULES}"
+    udevadm control --reload-rules 2>/dev/null || true
+    ok "Removed ${PCIE_RULES}"
+fi
 
 step "Step 3/5: Removing patched modules and legacy files"
 DEPMOD_OVERRIDE="/etc/depmod.d/zz-cmpunlocker.conf"
