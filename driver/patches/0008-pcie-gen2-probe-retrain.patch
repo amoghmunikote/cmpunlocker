@@ -1,0 +1,119 @@
+--- a/kernel-open/nvidia/nv.c
++++ b/kernel-open/nvidia/nv.c
+@@ -65,6 +65,10 @@
+ 
+ #include <linux/firmware.h>
+ #include <linux/cdev.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/pci.h>
++#include <uapi/linux/pci_regs.h>
+ 
+ #include <sound/core.h>             /* HDA struct snd_card */
+ 
+@@ -1360,6 +1364,96 @@
+ #if defined(NV_UVM_ENABLE)
+     nv_uvm_resume_P2P(pUuid);
+ #endif
++}
++
++/*
++ * Run the host-side portion of the CMP 170HX Gen2 sequence after GSP/RM has
++ * initialized the GPU, but before the GPU is reported as initialized to an
++ * opener. This covers both NVreg_GpuInitOnProbe=0 and =1. Retraining a live
++ * GPU from userspace races with BAR access and can make the device disappear.
++ */
++static void
++nv_cmp170hx_retrain_gen2(nv_state_t *nv)
++{
++    nv_linux_state_t *nvl = NV_GET_NVL_FROM_NV_STATE(nv);
++    struct pci_dev *gpu = nvl->pci_dev;
++    struct pci_dev *upstream;
++    void __iomem *bar0;
++    u16 gpu_ctl2, upstream_ctl2, upstream_ctl, link_status = 0;
++    u32 cya0, link_config;
++    int ret, attempt;
++
++    if ((gpu == NULL) ||
++        ((gpu->device != 0x20c2) && (gpu->device != 0x2082)))
++        return;
++
++    upstream = pci_upstream_bridge(gpu);
++    if (upstream == NULL)
++    {
++        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                      "CMP Gen2: no upstream PCIe bridge; skipping link retrain\n");
++        return;
++    }
++
++    /* Refresh endpoint Gen2 state while RM owns BAR0, then retrain. */
++    bar0 = ioremap(pci_resource_start(gpu, 0), 0x90000);
++    if (bar0 == NULL)
++    {
++        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                      "CMP Gen2: cannot map BAR0; skipping link retrain\n");
++        return;
++    }
++    cya0 = readl(bar0 + 0x8c2c0);
++    writel(cya0 & ~(1U << 2), bar0 + 0x8c2c0);
++    link_config = readl(bar0 + 0x8c040);
++    writel((link_config & ~0x000c0000U) | (2U << 18), bar0 + 0x8c040);
++    writel(0x00000006U, bar0 + 0x8872c);
++    (void)readl(bar0 + 0x8872c);
++    iounmap(bar0);
++    msleep(50);
++
++    ret = pcie_capability_read_word(gpu, PCI_EXP_LNKCTL2, &gpu_ctl2);
++    if (ret)
++        goto capability_error;
++    ret = pcie_capability_read_word(upstream, PCI_EXP_LNKCTL2, &upstream_ctl2);
++    if (ret)
++        goto capability_error;
++    gpu_ctl2 = (gpu_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_5_0GT;
++    upstream_ctl2 = (upstream_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_5_0GT;
++    ret = pcie_capability_write_word(gpu, PCI_EXP_LNKCTL2, gpu_ctl2);
++    if (ret)
++        goto capability_error;
++    ret = pcie_capability_write_word(upstream, PCI_EXP_LNKCTL2, upstream_ctl2);
++    if (ret)
++        goto capability_error;
++    ret = pcie_capability_read_word(upstream, PCI_EXP_LNKCTL, &upstream_ctl);
++    if (ret)
++        goto capability_error;
++    ret = pcie_capability_write_word(upstream, PCI_EXP_LNKCTL,
++                                     upstream_ctl | PCI_EXP_LNKCTL_RL);
++    if (ret)
++        goto capability_error;
++
++    for (attempt = 0; attempt < 20; attempt++)
++    {
++        msleep(100);
++        ret = pcie_capability_read_word(gpu, PCI_EXP_LNKSTA, &link_status);
++        if (!ret && (link_status & PCI_EXP_LNKSTA_DLLLA) &&
++            ((link_status & PCI_EXP_LNKSTA_CLS) >= PCI_EXP_LNKSTA_CLS_5_0GB))
++        {
++            NV_DEV_PRINTF(NV_DBG_INFO, nv, "CMP Gen2: PCIe link trained to Gen%u\n",
++                          link_status & PCI_EXP_LNKSTA_CLS);
++            return;
++        }
++    }
++
++    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                  "CMP Gen2: PCIe retrain completed without Gen2 link (status=0x%04x, ret=%d)\n",
++                  link_status, ret);
++    return;
++capability_error:
++    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                  "CMP Gen2: PCIe capability access failed (%d); skipping link retrain\n", ret);
+ }
+ 
+ /*
+@@ -1530,6 +1624,8 @@
+         nv->flags |= NV_FLAG_PERSISTENT_SW_STATE;
+     }
+ 
++    nv_cmp170hx_retrain_gen2(nv);
++
+     /* Generate and cache the UUID for future callers */
+     (void)rm_get_gpu_uuid_raw(sp, nv);
+ 
