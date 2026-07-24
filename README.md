@@ -4,20 +4,22 @@ Unlock tool for the NVIDIA CMP 170HX (GA100) mining card. Restores full SM compu
 
 Targets **nvidia-open driver 610.43.0x** on Linux. cmpunlocker does **not** install the full NVIDIA userspace package — it patches and installs open kernel modules only.
 
+Supports **one or more** CMP 170HX GPUs in a single install, including **mixed 8GB + 10GB** systems. Unlock geometry is chosen per GPU from PCI device ID at GSP boot.
+
 **[Join our Discord community](https://discord.gg/CdHSakKSFv)** for support and discussions.
 
 ---
 
 ## Background
 
-The CMP 170HX is a physically complete GA100 die (same silicon as the A100) with compute and memory artificially limited. This tool applies an in-driver unlock path (SEC2 Booter PLM open + host SS0/SS1/CFG1/LMR writes + FB/PMA adjustments) that runs automatically every time the patched modules boot GSP for PCI ID `0x20C2`.
+The CMP 170HX is a physically complete GA100 die (same silicon as the A100) with compute and memory artificially limited. This tool applies an in-driver unlock path (SEC2 Booter PLM open + host SS0/SS1/CFG1/LMR writes + FB/PMA adjustments) that runs automatically every time the patched modules boot GSP for each matching GPU (`0x20C2` / `0x2082`).
 
 Card size selects the memory geometry:
 
-| Physical card | Unlock geometry | CFG1 | LMR |
-|---|---|---|---|
-| **8 GB** | **64 GB** | `0x02779000` | `0x0000020B` |
-| **10 GB** | **40 GB** | `0x02669000` | `0x0000028A` |
+| Physical card | PCI ID | Unlock geometry | CFG1 | LMR |
+|---|---|---|---|---|
+| **8 GB** | `0x20C2` | **64 GB** | `0x02779000` | `0x0000020B` |
+| **10 GB** | `0x2082` | **40 GB** | `0x02669000` | `0x0000028A` |
 
 ---
 
@@ -39,42 +41,60 @@ Below are memory and performance results after applying the unlock:
 
 - Linux (x86-64)
 - Root access
-- NVIDIA CMP 170HX
+- One or more NVIDIA CMP 170HX GPUs (`10de:20c2` and/or `10de:2082`)
 - **nvidia-open 610.43.0x already installed** (libs + firmware)
 - Kernel headers matching the running kernel (`linux-headers-$(uname -r)` / `kernel-devel`)
 - Secure Boot disabled (patched modules are unsigned)
 - Network access on first install (downloads matching stock `open-gpu-kernel-modules` sources)
-- Python 3 (used at build time to select 8GB/10GB geometry)
+- Python 3 (used at build time)
 
 ---
 
 ## Install
 
-One command. Auto-detects 8GB vs 10GB from stock `nvidia-smi` memory, then builds patched open kernel modules into `/lib/modules/$(uname -r)/updates/cmpunlocker/`.
+One command. Enumerates all CMP 170HX GPUs, classifies each by PCI ID (8GB vs 10GB), then builds patched open kernel modules into `/lib/modules/$(uname -r)/updates/cmpunlocker/`.
 
 ```bash
 sudo ./install.sh
 ```
 
-Force a profile if detection is wrong or `nvidia-smi` is unavailable:
+Optional metadata override (geometry still follows each GPU’s PCI ID at runtime):
 
 ```bash
-sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
-sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
+sudo ./install.sh --profile=8gb
+sudo ./install.sh --profile=10gb
 ```
 
-Then perform a **cold reboot** (full power off, then boot) if modules did not hot-reload cleanly, or if memory still shows the stock size.
+Then perform a **cold reboot** (full power off, then boot) if modules did not hot-reload cleanly, or if any GPU still shows stock memory.
+
+Install metadata written under `/lib/modules/$(uname -r)/updates/cmpunlocker/`:
+
+| File | Contents |
+|---|---|
+| `card_profile` | `8gb`, `10gb`, or `mixed` |
+| `unlock_geometry` | `64GB`, `40GB`, or `mixed` |
+| `gpu_inventory` | One line per GPU: `BDF devid profile expected_mib` |
 
 ---
 
 ## Verify
 
+After reboot, verify **every** unlockable GPU:
+
+```bash
+sudo ./verify.sh
+```
+
+`verify.sh` checks each card’s `nvidia-smi` memory by PCI bus ID against the expected unlocked size (~65536 MiB for 8GB / ~40960 MiB for 10GB) and reports `SEC2_DEBUG` dmesg lines when present.
+
+Manual checks:
+
 ```bash
 nvidia-smi
-# 8GB card:  expect ~65536 MiB
-# 10GB card: expect ~40960 MiB
+# Each 8GB card:  expect ~65536 MiB
+# Each 10GB card: expect ~40960 MiB
 
-nvidia-smi --query-gpu=memory.total,pcie.link.gen.current,pcie.link.gen.max,clocks.max.sm --format=csv
+nvidia-smi --query-gpu=pci.bus_id,memory.total,pcie.link.gen.current,pcie.link.gen.max,clocks.max.sm --format=csv
 # Expect pcie.link.gen.current=2 and pcie.link.gen.max=2 after reboot
 
 sudo lspci -d 10de:20c2 -vv | grep -E 'LnkCap:|LnkSta:'
@@ -82,8 +102,9 @@ sudo lspci -d 10de:20c2 -vv | grep -E 'LnkCap:|LnkSta:'
 
 sudo dmesg | grep SEC2_DEBUG
 # Expected: PLMs opening to 0xffffffff, CFG1/LMR/SS0/SS1 writes, late PMA
+
+cat /lib/modules/$(uname -r)/updates/cmpunlocker/gpu_inventory
 cat /lib/modules/$(uname -r)/updates/cmpunlocker/card_profile
-# 8gb or 10gb
 ```
 
 ## What Gets Unlocked
@@ -93,6 +114,7 @@ cat /lib/modules/$(uname -r)/updates/cmpunlocker/card_profile
 | Full SM compute throughput (SS0/SS1) | Working ✓ |
 | Memory geometry (64GB on 8GB cards, 40GB on 10GB cards) | Working ✓ |
 | PCIe Gen2 link (`5GT/s`, Device Max ≥ 2) | Working ✓ |
+| Multi-GPU / mixed 8GB+10GB in one install | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
 
 ---
