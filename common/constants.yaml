@@ -12,6 +12,20 @@ compute:
   ss0: "0x88888888"
   ss1: "0x00000008"
 
+pcie:
+  target_gen: 2
+  link_speed_gen2: "0x2"
+  xve_link_control_status: "0x00088088"
+  xve_link_control_2: "0x000880a8"
+  pl_link_rate_addr: "0x0008c1c0"
+  pl_link_rate_value: "0x00240036"
+  vsec_hierarchy_addr: "0x00088610"
+  vsec_device_addr: "0x0008860c"
+  xp_fuse_override_base: "0x0008e110"
+  xp_fuse_override_val_base: "0x0008e120"
+  opt_gen23_addr: "0x0082057c"
+  opt_magic_a100: "0x00200000"
+
 profiles:
   "8gb":
     stock_mib: 8192
@@ -19,11 +33,9 @@ profiles:
     cfg1: "0x02779000"
     lmr: "0x0000020B"
     fb_bytes: "0x0000001000000000"
-    comment: "8GB physical card → 64GB geometry"
   "10gb":
     stock_mib: 10240
     unlocked_mib: 40960
     cfg1: "0x02669000"
     lmr: "0x0000028A"
     fb_bytes: "0x0000000A00000000"
-    comment: "10GB physical card → 40GB geometry"

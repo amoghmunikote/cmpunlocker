@@ -79,6 +79,7 @@ PROFILE="${CMPUNLOCKER_CARD_PROFILE:-8gb}"
 GSP_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
 [[ -f "${GSP_C}" ]] || die "Missing ${GSP_C} after patching"
 
+SKIP_GEOMETRY_REWRITE=0
 case "${PROFILE}" in
     8gb|8GB)
         PROFILE="8gb"
@@ -94,14 +95,25 @@ case "${PROFILE}" in
         FB_BYTES="0x0000000A00000000"
         UNLOCK_LABEL="40GB"
         ;;
+    mixed|MIXED)
+        PROFILE="mixed"
+        CFG1="0x02779000"
+        LMR="0x0000020B"
+        FB_BYTES="0x0000001000000000"
+        UNLOCK_LABEL="mixed"
+        SKIP_GEOMETRY_REWRITE=1
+        ;;
     *)
-        die "Unknown CMPUNLOCKER_CARD_PROFILE='${PROFILE}' (use 8gb or 10gb)"
+        die "Unknown CMPUNLOCKER_CARD_PROFILE='${PROFILE}' (use 8gb, 10gb, or mixed)"
         ;;
 esac
 
 info "Applying memory profile ${PROFILE} (${UNLOCK_LABEL} geometry)..."
 
-python3 - "${GSP_C}" "${CFG1}" "${LMR}" "${FB_BYTES}" "${UNLOCK_LABEL}" <<'PY'
+if [[ "${SKIP_GEOMETRY_REWRITE}" -eq 1 ]]; then
+    info "mixed profile: runtime device-id geometry (no build-time CFG1/LMR rewrite)"
+else
+    python3 - "${GSP_C}" "${CFG1}" "${LMR}" "${FB_BYTES}" "${UNLOCK_LABEL}" <<'PY'
 import pathlib, re, sys
 path, cfg1, lmr, fb, label = sys.argv[1:6]
 text = pathlib.Path(path).read_text()
@@ -143,11 +155,20 @@ if n1 != 1 or n2 != 1 or n3 != 1:
 pathlib.Path(path).write_text(text2)
 print(f"cfg1={cfg1} lmr={lmr} fb={fb} ({label})")
 PY
-ok "Memory profile ${PROFILE}: CFG1=${CFG1} LMR=${LMR} fb=${FB_BYTES} (${UNLOCK_LABEL})"
+fi
+ok "Memory profile ${PROFILE}: unlock_geometry=${UNLOCK_LABEL}"
 mkdir -p "${INSTALL_MOD_DIR}"
 printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
 printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
 printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
+
+# Optional per-GPU inventory from install.sh (one line: BDF devid profile expected_mib)
+if [[ -n "${CMPUNLOCKER_GPU_INVENTORY:-}" ]]; then
+    printf '%s\n' "${CMPUNLOCKER_GPU_INVENTORY}" > "${INSTALL_MOD_DIR}/gpu_inventory"
+    ok "Wrote gpu_inventory ($(echo "${CMPUNLOCKER_GPU_INVENTORY}" | grep -c . || true) GPU(s))"
+else
+    : > "${INSTALL_MOD_DIR}/gpu_inventory"
+fi
 
 info "Building modules for kernel ${KVER}..."
 cd "${SRC_DIR}"

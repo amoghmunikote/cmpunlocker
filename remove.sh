@@ -37,6 +37,7 @@ if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     echo "  - Removes /lib/modules/*/updates/cmpunlocker/"
     echo "  - Removes ${INSTALL_DIR} (legacy install dir, if present)"
     echo "  - Reloads stock NVIDIA modules (brief display interruption)"
+    echo "  - Removes cmpretrain service / modprobe Gen2 helpers"
     echo ""
     echo "Run: sudo ./remove.sh --yes"
     exit 1
@@ -71,6 +72,16 @@ if [[ -f "${SERVICE_FILE}" ]]; then
     ok "Removed ${SERVICE_FILE}"
 fi
 pkill -f "${INSTALL_DIR}/daemon/watchdog.py" 2>/dev/null || true
+
+for legacy_unit in cmpretrain.service cmp-gen2-retrain.service; do
+    systemctl disable --now "${legacy_unit}" 2>/dev/null || true
+    systemctl reset-failed "${legacy_unit}" 2>/dev/null || true
+done
+rm -f /etc/systemd/system/cmpretrain.service /usr/local/sbin/retrain.sh
+rm -f /etc/systemd/system/cmp-gen2-retrain.service /usr/local/sbin/cmp-gen2-retrain.sh
+rm -f /etc/modprobe.d/cmp-pcie-gen2.conf
+systemctl daemon-reload 2>/dev/null || true
+ok "Removed PCIe Gen2 helpers"
 
 step "Step 3/5: Removing patched modules and legacy files"
 mod_removed=0
