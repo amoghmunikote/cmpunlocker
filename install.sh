@@ -272,17 +272,25 @@ CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
-step "Step 5b/6: Installing PCIe Gen2 helpers"
+step "Step 5b/6: Configuring PCIe Gen2"
 cat > /etc/modprobe.d/cmp-pcie-gen2.conf <<'EOF'
 options nvidia NVreg_RegistryDwords="RmForceEnableGen2=1;RMPcieLinkSpeed=0x1"
 EOF
 ok "Wrote /etc/modprobe.d/cmp-pcie-gen2.conf"
 
-install -m 0755 "${SCRIPT_DIR}/tools/retrain.sh" /usr/local/sbin/retrain.sh
-install -m 0644 "${SCRIPT_DIR}/tools/cmpretrain.service" /etc/systemd/system/cmpretrain.service
+# Gen2 negotiation now occurs inside the NVIDIA driver's controlled device
+# initialization window. Remove old user-space retrain helpers: they race with
+# BAR0 access after the driver is live and can make a GPU disappear.
+for legacy_unit in cmpretrain.service cmp-gen2-retrain.service; do
+    systemctl disable --now "${legacy_unit}" 2>/dev/null || true
+    systemctl reset-failed "${legacy_unit}" 2>/dev/null || true
+done
+rm -f /etc/systemd/system/cmpretrain.service \
+      /etc/systemd/system/cmp-gen2-retrain.service \
+      /usr/local/sbin/retrain.sh \
+      /usr/local/sbin/cmp-gen2-retrain.sh
 systemctl daemon-reload
-systemctl enable cmpretrain.service
-ok "Enabled cmpretrain.service"
+ok "Removed legacy PCIe retrain helpers"
 
 step "Step 6/6: Done"
 echo ""
