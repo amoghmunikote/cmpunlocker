@@ -35,6 +35,7 @@ if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     warn "This removes cmpunlocker patched kernel modules:"
     echo "  - Stops leftover cmpunlocker systemd service (if present)"
     echo "  - Removes /lib/modules/*/updates/cmpunlocker/"
+    echo "  - Removes /etc/depmod.d/zz-cmpunlocker.conf override"
     echo "  - Removes ${INSTALL_DIR} (legacy install dir, if present)"
     echo "  - Reloads stock NVIDIA modules (brief display interruption)"
     echo ""
@@ -73,6 +74,14 @@ fi
 pkill -f "${INSTALL_DIR}/daemon/watchdog.py" 2>/dev/null || true
 
 step "Step 3/5: Removing patched modules and legacy files"
+DEPMOD_OVERRIDE="/etc/depmod.d/zz-cmpunlocker.conf"
+override_removed=0
+if [[ -f "${DEPMOD_OVERRIDE}" ]]; then
+    rm -f "${DEPMOD_OVERRIDE}"
+    override_removed=1
+    ok "Removed depmod override ${DEPMOD_OVERRIDE}"
+fi
+
 mod_removed=0
 kernels_touched=()
 shopt -s nullglob
@@ -87,6 +96,13 @@ for mod_dir in /lib/modules/*/updates/cmpunlocker; do
     fi
 done
 [[ "${mod_removed}" -gt 0 ]] || warn "No patched kernel modules found"
+
+# If we dropped the override but touched no module dirs, modules.dep still
+# reflects the stale override — regenerate it once for the running kernel.
+if [[ "${override_removed}" -eq 1 && ${#kernels_touched[@]} -eq 0 ]]; then
+    depmod -a "$(uname -r)" 2>/dev/null || true
+    ok "Refreshed depmod after override removal"
+fi
 
 if [[ ${#kernels_touched[@]} -gt 0 ]]; then
     info "Rebuilding initramfs so stock modules are packed again..."

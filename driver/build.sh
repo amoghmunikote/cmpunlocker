@@ -173,6 +173,21 @@ for ko in "${KO_FILES[@]}"; do
     ok "Installed ${base}"
 done
 
+# A stock DKMS build of the same driver in updates/dkms/ can outrank our patched
+# modules in the shared "updates" search path, so modprobe loads the unpatched
+# copy. Force depmod to always prefer updates/cmpunlocker for the nvidia modules.
+DEPMOD_OVERRIDE="/etc/depmod.d/zz-cmpunlocker.conf"
+if [[ -d /etc/depmod.d ]]; then
+    {
+        for mod in nvidia nvidia-modeset nvidia-uvm nvidia-drm nvidia-peermem; do
+            printf 'override %-15s * updates/cmpunlocker\n' "${mod}"
+        done
+    } > "${DEPMOD_OVERRIDE}"
+    ok "Wrote depmod override ${DEPMOD_OVERRIDE}"
+else
+    warn "/etc/depmod.d missing — cannot pin patched modules ahead of DKMS"
+fi
+
 depmod -a "${KVER}"
 ok "depmod complete"
 
