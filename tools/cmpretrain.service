@@ -1,0 +1,12 @@
+[Unit]
+Description=CMP 170HX PCIe Gen2 upstream soft retrain
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 15
+ExecStart=/usr/local/sbin/retrain.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

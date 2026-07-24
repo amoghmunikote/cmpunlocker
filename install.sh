@@ -186,6 +186,18 @@ chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
+step "Step 5b/6: Installing PCIe Gen2 helpers"
+cat > /etc/modprobe.d/cmp-pcie-gen2.conf <<'EOF'
+options nvidia NVreg_RegistryDwords="RmForceEnableGen2=1;RMPcieLinkSpeed=0x1"
+EOF
+ok "Wrote /etc/modprobe.d/cmp-pcie-gen2.conf"
+
+install -m 0755 "${SCRIPT_DIR}/tools/retrain.sh" /usr/local/sbin/retrain.sh
+install -m 0644 "${SCRIPT_DIR}/tools/cmpretrain.service" /etc/systemd/system/cmpretrain.service
+systemctl daemon-reload
+systemctl enable cmpretrain.service
+ok "Enabled cmpretrain.service"
+
 step "Step 6/6: Done"
 echo ""
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
@@ -196,8 +208,9 @@ echo "Profile: ${CARD_PROFILE} → expect ~${EXPECTED_MIB} MiB after unlock"
 echo "Next:"
 echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
 echo -e "  2. Verify memory: ${CYAN}nvidia-smi${NC}  (expect ~${EXPECTED_MIB} MiB)"
-echo -e "  3. Verify unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
-echo -e "  4. Verify SM clocks: ${CYAN}nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader${NC}"
+echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
+echo -e "  4. Verify unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
+echo -e "  5. Verify SM clocks: ${CYAN}nvidia-smi --query-gpu=clocks.max.sm --format=csv,noheader${NC}"
 echo ""
 echo "Log saved to: ${LOG_FILE}"
 echo ""
