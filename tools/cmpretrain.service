@@ -4,7 +4,7 @@ After=multi-user.target
 
 [Service]
 Type=oneshot
-ExecStartPre=/bin/sleep 20
+ExecStartPre=/bin/sleep 15
 ExecStart=/usr/local/sbin/retrain.sh
 RemainAfterExit=yes
 
