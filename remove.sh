@@ -37,7 +37,7 @@ if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     echo "  - Removes /lib/modules/*/updates/cmpunlocker/"
     echo "  - Removes ${INSTALL_DIR} (legacy install dir, if present)"
     echo "  - Reloads stock NVIDIA modules (brief display interruption)"
-    echo "  - Removes cmpretrain service / modprobe Gen2 helpers"
+    echo "  - Removes early/legacy PCIe Gen2 helpers"
     echo "  - Restores the pre-install kernel command line (reverts IOMMU changes)"
     echo ""
     echo "Run: sudo ./remove.sh --yes"
@@ -78,8 +78,11 @@ for legacy_unit in cmpretrain.service cmp-gen2-retrain.service; do
     systemctl disable --now "${legacy_unit}" 2>/dev/null || true
     systemctl reset-failed "${legacy_unit}" 2>/dev/null || true
 done
+systemctl disable --now cmp-gen2-early.service 2>/dev/null || true
+systemctl reset-failed cmp-gen2-early.service 2>/dev/null || true
 rm -f /etc/systemd/system/cmpretrain.service /usr/local/sbin/retrain.sh
 rm -f /etc/systemd/system/cmp-gen2-retrain.service /usr/local/sbin/cmp-gen2-retrain.sh
+rm -f /etc/systemd/system/cmp-gen2-early.service /usr/local/sbin/cmp-gen2-hammer
 rm -f /etc/modprobe.d/cmp-pcie-gen2.conf
 systemctl daemon-reload 2>/dev/null || true
 ok "Removed PCIe Gen2 helpers"

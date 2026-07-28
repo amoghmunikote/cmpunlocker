@@ -1,0 +1,16 @@
+[Unit]
+Description=CMP 170HX early PCIe Gen2 retrain
+Documentation=https://github.com/studebaker8/cmp170hx-gen2
+DefaultDependencies=no
+After=sysinit.target
+Before=basic.target multi-user.target graphical.target
+ConditionPathExists=/usr/local/sbin/cmp-gen2-hammer
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cmp-gen2-hammer
+TimeoutStartSec=45
+RemainAfterExit=no
+
+[Install]
+WantedBy=sysinit.target

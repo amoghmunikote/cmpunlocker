@@ -80,7 +80,7 @@
 +    {
 +        msleep(100);
 +        ret = pcie_capability_read_word(gpu, PCI_EXP_LNKSTA, &link_status);
-+        if (!ret && (link_status & PCI_EXP_LNKSTA_DLLLA) &&
++        if (!ret &&
 +            ((link_status & PCI_EXP_LNKSTA_CLS) >= PCI_EXP_LNKSTA_CLS_5_0GB))
 +        {
 +            NV_DEV_PRINTF(NV_DBG_INFO, nv, "CMP Gen2: PCIe link trained to Gen%u\n",

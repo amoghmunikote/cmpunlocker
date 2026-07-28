@@ -10,18 +10,22 @@ LOG_FILE="${LOG_DIR}/install_$(date +%Y%m%d_%H%M%S).log"
 
 PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
+CONFIGURE_GEN2_SERVICE=1
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
         --profile=10gb|--profile=10GB) PROFILE_OVERRIDE="10gb" ;;
         --no-iommu) CONFIGURE_IOMMU=0 ;;
+        --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         -h|--help)
             cat <<'EOF'
-Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu]
+Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
+  --no-gen2-service
+                  Do not install the early-boot PCIe Gen2 retrain service
 
 By default the installer appends intel_iommu=on / amd_iommu=on plus iommu=pt to
 the kernel command line so the IOMMU runs in passthrough mode. This takes effect
@@ -292,6 +296,15 @@ rm -f /etc/systemd/system/cmpretrain.service \
 systemctl daemon-reload
 ok "Removed legacy PCIe retrain helpers"
 
+if (( CONFIGURE_GEN2_SERVICE == 1 )); then
+    chmod +x "${SCRIPT_DIR}/tools/cmp-gen2-hammer.sh" \
+             "${SCRIPT_DIR}/tools/cmp-gen2-service.sh"
+    "${SCRIPT_DIR}/tools/cmp-gen2-service.sh" install
+    ok "Early-boot Gen2 retrain service armed (not started in this session)"
+else
+    warn "--no-gen2-service given; early-boot PCIe retraining is not installed"
+fi
+
 step "Step 5c/6: Configuring IOMMU (passthrough)"
 IOMMU_STATUS="skipped"
 IOMMU_PARAMS=""
@@ -447,10 +460,14 @@ echo ""
 echo "Next:"
 echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
 echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
-echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
+echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (current must be 2; max may return to 1)"
 echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
 echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
 echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
+if (( CONFIGURE_GEN2_SERVICE == 1 )); then
+    echo -e "  7. Verify negotiated Gen2: ${CYAN}sudo ./tools/cmp-gen2-service.sh verify${NC}"
+    echo -e "     Recovery boot option: ${CYAN}systemd.mask=cmp-gen2-early.service${NC}"
+fi
 echo ""
 echo "Log saved to: ${LOG_FILE}"
 echo ""

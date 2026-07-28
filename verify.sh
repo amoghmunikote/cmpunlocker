@@ -188,4 +188,13 @@ fi
 
 echo ""
 ok "All ${#GPU_BDFS[@]} unlockable GPU(s) report unlocked memory"
+
+if [[ -x "${SCRIPT_DIR}/tools/cmp-gen2-service.sh" ]]; then
+    echo ""
+    info "Checking negotiated PCIe generation"
+    if ! "${SCRIPT_DIR}/tools/cmp-gen2-service.sh" verify; then
+        warn "Memory unlock is healthy, but PCIe Gen2 is not active"
+        exit 1
+    fi
+fi
 exit 0

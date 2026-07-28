@@ -63,6 +63,36 @@ sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
 sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 ```
 
+### Early-boot PCIe Gen2 retraining
+
+The Gen2 capability opened by `0007-pcie-gen2.patch` is transient during GSP
+bootstrap. The installer therefore enables `cmp-gen2-early.service`, which asks
+the CMP endpoint and its dynamically detected upstream bridge for Gen2 every
+50 ms during early boot. It stops as soon as the negotiated `LnkSta` reaches
+Gen2. The installer only enables the service; it never retrains the active link
+in the current desktop session.
+
+To install the memory/compute patches without arming early PCIe retraining:
+
+```bash
+sudo ./install.sh --no-gen2-service
+```
+
+The standalone service controls leave the patched NVIDIA driver untouched:
+
+```bash
+sudo ./tools/cmp-gen2-service.sh install
+sudo ./tools/cmp-gen2-service.sh verify
+sudo ./tools/cmp-gen2-service.sh remove
+```
+
+If a machine does not finish booting during first-time testing, add
+`systemd.mask=cmp-gen2-early.service` temporarily to the kernel command line.
+
+See [the 10 GB `10de:2082` validation](docs/gen2-10gb-2082-validation.md) for
+the tested hardware/software configuration, boot timing, bandwidth results,
+and reporting differences from the published 8 GB result.
+
 ### IOMMU
 
 The installer also enables the IOMMU in passthrough mode, appending `intel_iommu=on iommu=pt` (Intel) or `amd_iommu=on iommu=pt` (AMD) to the kernel command line via `/etc/default/grub` or `/etc/kernel/cmdline`, then regenerating the boot config. Conflicting `iommu=` / `*_iommu=` entries are replaced, the original file is backed up to `*.cmpunlocker.bak`, and `remove.sh` restores it.
@@ -85,11 +115,14 @@ nvidia-smi
 # 10GB card: expect ~40960 MiB
 
 nvidia-smi --query-gpu=memory.total,pcie.link.gen.current,pcie.link.gen.max,clocks.max.sm --format=csv
-# Expect pcie.link.gen.current=2 and pcie.link.gen.max=2 after reboot
+# Expect pcie.link.gen.current=2. The advertised max may return to 1 after the
+# transient bootstrap window closes; current negotiated speed is authoritative.
 
-sudo lspci -d 10de:20c2 -vv | grep -E 'LnkCap:|LnkSta:'
+sudo lspci -d 10de:20c2 -vv | grep -E 'LnkCap:|LnkSta:'  # 8GB
+sudo lspci -d 10de:2082 -vv | grep -E 'LnkCap:|LnkSta:'  # 10GB
 # Expect LnkSta: Speed 5GT/s (not 2.5GT/s)
 
+sudo ./tools/cmp-gen2-service.sh verify
 sudo dmesg | grep SEC2_DEBUG
 # Expected: PLMs opening to 0xffffffff, CFG1/LMR/SS0/SS1 writes, late PMA
 cat /lib/modules/$(uname -r)/updates/cmpunlocker/card_profile
@@ -102,7 +135,7 @@ cat /lib/modules/$(uname -r)/updates/cmpunlocker/card_profile
 |---|---|
 | Full SM compute throughput (SS0/SS1) | Working ✓ |
 | Memory geometry (64GB on 8GB cards, 40GB on 10GB cards) | Working ✓ |
-| PCIe Gen2 link (`5GT/s`, Device Max ≥ 2) | Working ✓ |
+| PCIe Gen2 link (`LnkSta` at `5GT/s`) | Early-boot retrain required |
 | Persistence across reboot (patched modules) | Working ✓ |
 
 ---
