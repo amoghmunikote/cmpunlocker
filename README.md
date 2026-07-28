@@ -93,6 +93,26 @@ See [the 10 GB `10de:2082` validation](docs/gen2-10gb-2082-validation.md) for
 the tested hardware/software configuration, boot timing, bandwidth results,
 and reporting differences from the published 8 GB result.
 
+#### Verified 10 GB (`10de:2082`) result
+
+The early service has been validated on one 10 GB card with driver
+`610.43.02`, VBIOS `92.00.66.00.02`, and an Intel Xeon E5 v4 host:
+
+| Measurement | Gen1 x4 | Gen2 x4 |
+|---|---:|---:|
+| PCI configuration `LnkSta` | `0x1041` | `0x1042` |
+| sysfs `current_link_speed` | 2.5 GT/s | 5.0 GT/s |
+| Pinned H2D bandwidth | ~0.82 GB/s | 1.633 GB/s |
+| Pinned D2H bandwidth | ~0.84 GB/s | 1.679 GB/s |
+| Unlocked memory | 40960 MiB | 40960 MiB |
+
+On this 10 GB configuration, NVML/`nvidia-smi` continued to report PCIe Gen1
+and sysfs `max_link_speed` returned to 2.5 GT/s after the transient window
+closed. Those fields were stale capability reports: `LnkSta=0x1042`, sysfs
+`current_link_speed=5.0 GT/s`, and the doubled host-transfer bandwidth
+confirmed that the link remained negotiated at Gen2. Do not use
+`nvidia-smi` as the only Gen2 success criterion on `10de:2082`.
+
 ### IOMMU
 
 The installer also enables the IOMMU in passthrough mode, appending `intel_iommu=on iommu=pt` (Intel) or `amd_iommu=on iommu=pt` (AMD) to the kernel command line via `/etc/default/grub` or `/etc/kernel/cmdline`, then regenerating the boot config. Conflicting `iommu=` / `*_iommu=` entries are replaced, the original file is backed up to `*.cmpunlocker.bak`, and `remove.sh` restores it.
@@ -115,8 +135,8 @@ nvidia-smi
 # 10GB card: expect ~40960 MiB
 
 nvidia-smi --query-gpu=memory.total,pcie.link.gen.current,pcie.link.gen.max,clocks.max.sm --format=csv
-# Expect pcie.link.gen.current=2. The advertised max may return to 1 after the
-# transient bootstrap window closes; current negotiated speed is authoritative.
+# The 8GB variant may report current=2. On the tested 10GB/2082 card, NVML
+# continued to report current=1/max=1 after a successful Gen2 retrain.
 
 sudo lspci -d 10de:20c2 -vv | grep -E 'LnkCap:|LnkSta:'  # 8GB
 sudo lspci -d 10de:2082 -vv | grep -E 'LnkCap:|LnkSta:'  # 10GB
