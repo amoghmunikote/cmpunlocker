@@ -271,6 +271,16 @@ ok "NVIDIA driver ${detected} is supported"
 [[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). Install linux-headers-$(uname -r) or kernel-devel."
 ok "Kernel headers present for $(uname -r)"
 
+step "Step 4b/6: Removing Nvidia DKMS modules"
+info "Not all systems feature default DKMS modules"
+
+for ver in "${SUPPORTED_VERSIONS[@]}"; do
+    dkms remove nvidia/"${ver}" --all 2>/dev/null || true
+done
+
+depmod -a "$(uname -r)"
+ok "DKMS conflicting modules resolution complete"
+
 step "Step 5/6: Building and installing patched modules"
 chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
@@ -469,5 +479,6 @@ if (( CONFIGURE_GEN2_SERVICE == 1 )); then
     echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
 fi
 echo ""
+echo "This script removed the nvidia DKMS kernel modules. You will need to re-run this script after each kernel upgrade"
 echo "Log saved to: ${LOG_FILE}"
 echo ""
