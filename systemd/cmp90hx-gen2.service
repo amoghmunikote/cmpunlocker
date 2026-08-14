@@ -1,0 +1,16 @@
+[Unit]
+# CMP 90HX PCIe Gen2 unlock (rejoin16). Runs once per boot after the NVIDIA
+# stockflow module is up; takes several minutes because each privilege-mask
+# write needs its own module reload cycle.
+Description=CMP 90HX PCIe Gen2 unlock (rejoin16 PLM opens + link retrain)
+After=multi-user.target
+# If you auto-start a miner, order it After= this unit.
+
+[Service]
+Type=oneshot
+ExecStart=/home/jonathan/cmpunlocker/bench/rejoin16-apply-all.sh
+TimeoutStartSec=1800
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
