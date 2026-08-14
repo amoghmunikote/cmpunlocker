@@ -65,7 +65,28 @@ PAYLOAD_WRITES="
 0x00823800 0xffffffff
 "
 
+# --- fast path: warm reboots preserve the PLM state -------------------------
+# If the masks are already open (and the speed config persisted), skip all
+# 34 reload cycles and go straight to verification.
+plms_open=0
 if [[ "${SKIP_PHASE1:-0}" != "1" ]]; then
+    plms_open="$(sudo python3 - "$BDF" <<'PY'
+import os, mmap, struct, sys
+fd = os.open(f"/sys/bus/pci/devices/{sys.argv[1]}/resource0", os.O_RDONLY)
+m = mmap.mmap(fd, 16 << 20, mmap.MAP_SHARED, mmap.PROT_READ)
+# NOTE: OPTB masks re-lock on warm reboot while XVE/XP3G/FEAT persist -
+# and Gen2 provably works with OPTB locked, so they are not in this set.
+ok = all(struct.unpack_from("<I", m, o)[0] == 0xffffffff
+         for o in (0x88ff4, 0x8e1b0, 0x823800))
+os.close(fd)
+print(1 if ok else 0)
+PY
+)"
+fi
+
+if [[ "${SKIP_PHASE1:-0}" != "1" && "$plms_open" == "1" ]]; then
+    say "phase1: all masks already open (warm boot) - skipping 34 cycles"
+elif [[ "${SKIP_PHASE1:-0}" != "1" ]]; then
     while read -r addr value; do
         [[ -z "$addr" ]] && continue
         cycle_out="$("$CYCLE" "$addr" "$value" 2>&1)"
@@ -85,6 +106,15 @@ else
     say "phase1 skipped (SKIP_PHASE1=1)"
 fi
 rm -f "$SPEC"
+
+# fast path: if the link is already at Gen2, nothing else to do
+if [[ "$plms_open" == "1" ]]; then
+    cur="$(cat /sys/bus/pci/devices/${BDF}/current_link_speed 2>/dev/null)"
+    if [[ "$cur" == "5.0 GT/s PCIe" ]]; then
+        say "link already at Gen2 (warm boot) - done in seconds, no cycles needed"
+        exit 0
+    fi
+fi
 
 # --- phase 2: confirm the module applied the late Gen2 config -------------
 if sudo dmesg | grep -q "REJOIN16: late Gen2 config applied"; then
