@@ -162,6 +162,22 @@ compute issue-rate bins, `0x88888888` = full), `SS1` (`0x823820`, `0x8`),
 `GFX_SPEED_SELECT` (`0x823830`, stock `0x3`), each with a `__PRIV_LEVEL_MASK`
 PLM nearby (`0x823b04` and the `0x823b04-0x823b1c` cluster).
 
+Measured `GFX_SPEED_SELECT` value sweep (Vulkan fill-rate bench,
+`bench/vkrenderbench.c`, instanced-triangle Gpix/s, same boot):
+
+| value | Gpix/s | meaning |
+|---|---|---|
+| 0 / 1 / 2 / 3 (stock) | 3.42 | throttled floor (~5% of full) |
+| **4** | **64.7** | **full gfx issue rate (19x stock)** |
+| 5 | 13.4 | mid bin |
+| 6 | 6.8 | low-mid bin |
+| 7 / 8 / 0xf / 0x88888888 | 3.42 | invalid -> throttled fallback |
+
+The register is a table selector, not a bitmask: exactly `0x4` unlocks.
+Like the compute clamp, it gates the gfx engine's issue rate, not the SM
+clock frequency (1845 MHz reported under load in both states; power draw
+96.7W throttled vs 117.8W unlocked for the same scene).
+
 ## Open questions / status
 
 - **Cold boot**: warm reboots preserve the full Gen2 config (card POSTs at
