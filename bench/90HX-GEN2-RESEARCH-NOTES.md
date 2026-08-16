@@ -180,9 +180,14 @@ clock frequency (1845 MHz reported under load in both states; power draw
 
 ## Open questions / status
 
-- **Cold boot**: warm reboots preserve the full Gen2 config (card POSTs at
-  Gen2). The complete relock -> 34-cycle reapply path is implemented in the
-  boot service but a true cold-power-cycle validation is pending.
+- **Cold boot: VALIDATED (2026-08-16).** True power-cycle test: PLMs
+  re-latched locked, the boot service ran the full 35-cycle apply
+  automatically (~6m42s), cycle 1 bootstrapped FEAT (polls=0 OK), every
+  subsequent write landed with real payload fires (~147 polls each), kernel
+  applied the Gen2 config, retrain produced 5.0 GT/s on attempt 1, compute
+  PASS_CMP90HX_ALL_TARGETS_FULL_SPEED. Warm reboots preserve the full
+  config (card POSTs at Gen2). Note: OPTB_D0 (0x8200d0) re-locks after the
+  apply on some boots; Gen2 works without it.
 - **Minimal PLM set**: the 34-write table is the proven-superset; bisecting
   the minimal subset costs one cold boot per test.
 - **JTAG (Host2Jtag)**: unsolved on GA102. The GA100 PJTAG PLM addresses
