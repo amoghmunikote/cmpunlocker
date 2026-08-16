@@ -63,6 +63,7 @@ PAYLOAD_WRITES="
 0x008200f0 0xffffffff
 0x008200f4 0xffffffff
 0x00823800 0xffffffff
+0x00823b04 0xffffffff
 "
 
 # --- fast path: warm reboots preserve the PLM state -------------------------
@@ -106,6 +107,21 @@ else
     say "phase1 skipped (SKIP_PHASE1=1)"
 fi
 rm -f "$SPEC"
+
+# --- GFX speed-select (only relevant for rendering/display use) -------------
+# NV_FUSE_FEATURE_OVERRIDE_GFX_SPEED_SELECT (0x823830): stock CMP value 0x3
+# (two lowest gfx clock bins). Once its PLM (0x823b04, opened in phase 1) is
+# open, CPU writes stick - 0x4 enables the next bin. Harmless headless.
+sudo python3 - "$BDF" <<'PY'
+import os, mmap, struct, sys
+fd = os.open(f"/sys/bus/pci/devices/{sys.argv[1]}/resource0", os.O_RDWR)
+m = mmap.mmap(fd, 16 << 20, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+before = struct.unpack_from("<I", m, 0x823830)[0]
+struct.pack_into("<I", m, 0x823830, 0x4)
+after = struct.unpack_from("<I", m, 0x823830)[0]
+print(f"rejoin16-apply-all: GFX_SPEED_SELECT 0x{before:08x} -> 0x{after:08x}")
+os.close(fd)
+PY
 
 # fast path: if the link is already at Gen2, nothing else to do
 if [[ "$plms_open" == "1" ]]; then

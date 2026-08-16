@@ -138,6 +138,30 @@ coin flip on wedging the card (see Hazards).
 - `OPT_GEN23` (`0x82057c`) and `VSEC_DEVICE` (`0x8860c`) do not take writes
   even via the chain (fuse-shadowed) - harmless to skip.
 
+## Bonus: GFX speed select (rendering throttle)
+
+The same fuse block that holds the compute speed selectors also holds
+`NV_FUSE_FEATURE_OVERRIDE_GFX_SPEED_SELECT` (`0x823830`), gated by its PLM
+at `0x823b04`. Stock CMP value is `0x3` - the graphics clock domain is
+clamped to its two lowest speed bins, which is why desktop rendering /
+gfx-engine tasks pin at 100% on CMP cards (reported with Cinnamon on a
+headed setup; invisible on headless rigs).
+
+Fix (done by default in `rejoin16-apply-all.sh`): open the PLM with one
+payload write (`0x823b04 = 0xffffffff`), then the select is CPU-writable -
+`0x823830 = 0x4` enables the next bin. Manually, on a running unlocked
+system:
+
+```sh
+sudo bench/rejoin16-cycle.sh 0x00823b04 0xffffffff   # one reload cycle
+sudo bench/bar0poke <bdf> wr 0x00823830 0x00000004
+```
+
+Related registers in the same block (measured on GA102): `SS0` (`0x82381c`,
+compute issue-rate bins, `0x88888888` = full), `SS1` (`0x823820`, `0x8`),
+`GFX_SPEED_SELECT` (`0x823830`, stock `0x3`), each with a `__PRIV_LEVEL_MASK`
+PLM nearby (`0x823b04` and the `0x823b04-0x823b1c` cluster).
+
 ## Open questions / status
 
 - **Cold boot**: warm reboots preserve the full Gen2 config (card POSTs at
