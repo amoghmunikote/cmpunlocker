@@ -28,7 +28,15 @@ LOG=logger
 say() { echo "rejoin16-apply-all: $*"; $LOG -t rejoin16-apply-all -- "$*" 2>/dev/null || true; }
 
 # --- phase 1: privilege-mask opens, one module reload each ----------------
+# NOTE: the FEAT write MUST be first. Measured behavior: extra crafted
+# writes only fire when FEAT_OVR_PLM is already open at canary time (it
+# persists across module reloads). If a cycle's extra write targets FEAT,
+# the canary itself performs the unlock in that same load (works with FEAT
+# locked), and the readback shows open - so cycle 1 bootstraps the compute
+# unlock and every later cycle fires normally. Without this, a cycle run
+# while FEAT is still locked (e.g. apply right at boot) fails NO-EFFECT.
 PAYLOAD_WRITES="
+0x00823804 0xffffffff
 0x00088fe8 0xffffffff
 0x00088fec 0xffffffff
 0x00088ff0 0xffffffff
