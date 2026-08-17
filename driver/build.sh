@@ -50,6 +50,7 @@ PATCH_ORDER=(
     late-pma.patch
     bar0-pramin-clamp.patch
     ce-scrub-workarounds.patch
+    scrub-watchdog-timeout.patch
     persistent-sw-state.patch
     pcie-gen2.patch
     pcie-gen2-probe-retrain.patch

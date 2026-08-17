@@ -1,0 +1,24 @@
+--- a/src/nvidia/arch/nvalloc/unix/src/os.c
++++ b/src/nvidia/arch/nvalloc/unix/src/os.c
+@@ -2144,6 +2144,21 @@
+         }
+     }
+ 
++    //
++    // CMP 170HX / 90HX with the memory unlock: these boards enumerate in
++    // graphics mode and inherit its 4 second thread-state budget, but the
++    // unlock grows the framebuffer up to 8x stock. When a process dies
++    // holding most of it, scrubbing the freed (often heavily fragmented)
++    // range can exceed 4 seconds; _scrubWaitAndSave then hits NV_ERR_TIMEOUT
++    // and RM cannot create new CUDA contexts until reboot. Give these cards
++    // double the compute-mode budget.
++    //
++    if (((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2) ||
++        ((pGpu->idInfo.PCIDeviceID >> 16) == 0x2082))
++    {
++        *pTimeoutUs = 60 * 1000000;
++    }
++
+     *pFlags = GPU_TIMEOUT_FLAGS_OSTIMER;
+ 
+     *pScale = 1;
