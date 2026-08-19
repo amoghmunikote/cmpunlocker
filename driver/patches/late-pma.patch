@@ -98,7 +98,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/mem_mgr/mem_mgr.c b/src/nvidia/src/kernel
 +        return NV_ERR_INVALID_ARGUMENT;
 +
 +    devId = pGpu->idInfo.PCIDeviceID >> 16;
-+    if (devId != 0x20C2 && devId != 0x2082)
++    if (devId != 0x20C2)
 +        return NV_OK;
 +
 +    stockFbBytes = 0x200000000ULL;
