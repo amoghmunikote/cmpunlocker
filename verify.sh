@@ -63,20 +63,36 @@ if [[ -r "${INVENTORY_FILE}" ]] && [[ -s "${INVENTORY_FILE}" ]]; then
     done < "${INVENTORY_FILE}"
 else
     info "No installed gpu_inventory; enumerating via lspci"
-    mapfile -t PCI_LINES < <(lspci -nn 2>/dev/null | grep -iE '10de:20c2|10de:2082' || true)
-    [[ ${#PCI_LINES[@]} -gt 0 ]] || die "No unlockable CMP 170HX GPU found (10de:20c2 / 10de:2082)"
-    for PCI_LINE in "${PCI_LINES[@]}"; do
-        PCI="$(echo "${PCI_LINE}" | awk '{print $1}')"
-        PCI_FULL="$(normalize_bus_id "${PCI}")"
-        DEVID="$(echo "${PCI_LINE}" | grep -oE '10de:[0-9a-fA-F]{4}' | head -1 | cut -d: -f2 | tr '[:upper:]' '[:lower:]')"
-        PROF="$(profile_from_devid "${DEVID}")"
-        [[ "${PROF}" != "unsupported" ]] || continue
-        EXP="$(expected_mib_for_profile "${PROF}")"
-        GPU_BDFS+=("${PCI_FULL}")
-        GPU_DEVIDS+=("${DEVID}")
-        GPU_PROFILES+=("${PROF}")
-        GPU_EXPECTED+=("${EXP}")
+fi
+
+mapfile -t PCI_LINES < <(lspci -nn 2>/dev/null | grep -iE '10de:20c2|10de:2082' || true)
+[[ ${#PCI_LINES[@]} -gt 0 ]] || die "No unlockable CMP 170HX GPU found (10de:20c2 / 10de:2082)"
+
+untracked=0
+for PCI_LINE in "${PCI_LINES[@]}"; do
+    PCI="$(echo "${PCI_LINE}" | awk '{print $1}')"
+    PCI_FULL="$(normalize_bus_id "${PCI}")"
+
+    known=0
+    for existing in ${GPU_BDFS[@]+"${GPU_BDFS[@]}"}; do
+        [[ "${existing}" == "${PCI_FULL}" ]] && { known=1; break; }
     done
+    (( known )) && continue
+
+    DEVID="$(echo "${PCI_LINE}" | grep -oE '10de:[0-9a-fA-F]{4}' | head -1 | cut -d: -f2 | tr '[:upper:]' '[:lower:]')"
+    PROF="$(profile_from_devid "${DEVID}")"
+    [[ "${PROF}" != "unsupported" ]] || continue
+    EXP="$(expected_mib_for_profile "${PROF}")"
+    GPU_BDFS+=("${PCI_FULL}")
+    GPU_DEVIDS+=("${DEVID}")
+    GPU_PROFILES+=("${PROF}")
+    GPU_EXPECTED+=("${EXP}")
+    untracked=$((untracked + 1))
+done
+
+if (( untracked > 0 )) && [[ -r "${INVENTORY_FILE}" ]] && [[ -s "${INVENTORY_FILE}" ]]; then
+    warn "${untracked} GPU(s) present but absent from the inventory — verifying them anyway"
+    warn "Re-run install.sh to record them (the inventory predates these cards)"
 fi
 
 [[ ${#GPU_BDFS[@]} -gt 0 ]] || die "No unlockable GPUs to verify"
@@ -115,12 +131,20 @@ done
 
 step "Checking unlock logs and installed profile"
 sec2_logs="$(dmesg 2>/dev/null | grep 'SEC2_DEBUG' || true)"
+log_source="dmesg"
+if [[ -z "${sec2_logs}" ]] && command -v journalctl &>/dev/null; then
+    sec2_logs="$(journalctl -k --no-pager 2>/dev/null | grep 'SEC2_DEBUG' || true)"
+    [[ -n "${sec2_logs}" ]] && log_source="journalctl -k"
+fi
+
 if [[ -n "${sec2_logs}" ]]; then
-    ok "dmesg contains SEC2_DEBUG unlock logs"
+    ok "${log_source} contains SEC2_DEBUG unlock logs"
     info "Sample:"
     printf '%s\n' "${sec2_logs}" | tail -n 8 | sed 's/^/  /'
+elif [[ "${EUID}" -ne 0 ]] && ! dmesg &>/dev/null; then
+    warn "Cannot read kernel logs as non-root (kernel.dmesg_restrict=1); re-run with sudo"
 else
-    warn "No SEC2_DEBUG lines in dmesg (logs may have rotated; unlock can still be OK if memory is unlocked)"
+    warn "No SEC2_DEBUG lines in kernel logs (logs may have rotated; unlock can still be OK if memory is unlocked)"
 fi
 
 echo ""
