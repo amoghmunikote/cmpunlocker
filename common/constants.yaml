@@ -1,31 +1,8 @@
-driver_versions:
-  - "610.57.04"
-  - "610.43.03"
-  - "610.43.02"
-
 gpu:
   vendor_id: "10de"
   device_ids:
-    - "20c2"
-    - "2082"
-
-compute:
-  ss0: "0x88888888"
-  ss1: "0x00000008"
-
-pcie:
-  target_gen: 2
-  link_speed_gen2: "0x2"
-  xve_link_control_status: "0x00088088"
-  xve_link_control_2: "0x000880a8"
-  pl_link_rate_addr: "0x0008c1c0"
-  pl_link_rate_value: "0x00240036"
-  vsec_hierarchy_addr: "0x00088610"
-  vsec_device_addr: "0x0008860c"
-  xp_fuse_override_base: "0x0008e110"
-  xp_fuse_override_val_base: "0x0008e120"
-  opt_gen23_addr: "0x0082057c"
-  opt_magic_a100: "0x00200000"
+    "8gb": "0x20C2"
+    "10gb": "0x2082"
 
 profiles:
   "8gb":
@@ -34,9 +11,110 @@ profiles:
     cfg1: "0x02779000"
     lmr: "0x0000020B"
     fb_bytes: "0x0000001000000000"
+    label: "64GB"
+    geometry_rewrite: true
   "10gb":
     stock_mib: 10240
     unlocked_mib: 40960
     cfg1: "0x02669000"
     lmr: "0x0000028A"
     fb_bytes: "0x0000000A00000000"
+    label: "40GB"
+    geometry_rewrite: true
+  "mixed":
+    stock_mib: 8192
+    unlocked_mib: 65536
+    cfg1: "0x02779000"
+    lmr: "0x0000020B"
+    fb_bytes: "0x0000001000000000"
+    label: "mixed"
+    geometry_rewrite: false
+
+unlocks:
+  privilege_masks:
+    patch: sec2-postbl-plm-ss-cfg.patch
+    registers:
+      pjtag_plm:      { addr: "0x0000c840", value: "0xffffffff" }
+      pjtag_sec_plm:  { addr: "0x0000c848", value: "0xffffffff" }
+      xve:            { addr: "0x00088ff4", value: "0xffffffff" }
+      xve_b:          { addr: "0x00088ab4", value: "0xffffffff" }
+      xve_c:          { addr: "0x00088ff8", value: "0xffffffff" }
+      wpr:            { addr: "0x001fa7c4", value: "0xffffffff" }
+      wpr_cfg:        { addr: "0x001fa7cc", value: "0xfffff0ff" }
+      opt_plm:        { addr: "0x008200fc", value: "0xffffffff" }
+      feat:           { addr: "0x00823804", value: "0xffffffff" }
+      feat2:          { addr: "0x00823b00", value: "0xffffffff" }
+      fbpa_plm:       { addr: "0x009a0148", value: "0xffffffff" }
+
+  compute_throughput:
+    patch: sec2-postbl-plm-ss-cfg.patch
+    registers:
+      sm_speed_select_0: { addr: "0x0082381c", value: "0x88888888" }
+      sm_speed_select_1: { addr: "0x00823820", value: "0x00000008" }
+
+  memory_geometry:
+    patch: sec2-postbl-plm-ss-cfg.patch
+    registers:
+      fbpa_cfg1: { addr: "0x009a0204" }
+      ltc_lmr:   { addr: "0x00100ce0" }
+      wpr2_lo:   { addr: "0x001fa824" }
+      wpr2_hi:   { addr: "0x001fa828" }
+
+  floorsweep_guard:
+    patch: floorsweep-guard.patch
+    registers:
+      opt_fbpa_disable: { addr: "0x00820368", value: "0x003FC000" }
+
+  pcie_gen2:
+    patch: pcie-gen2.patch
+    registers:
+      link_cap:            { addr: "0x00088084" }
+      link_cap2:           { addr: "0x000880a4" }
+      link_control_2:      { addr: "0x000880a8" }
+      link_control_status: { addr: "0x00088088" }
+      pl_link_rate:        { addr: "0x0008c1c0", value: "0x00240036" }
+      fuse_override:       { addr: "0x0008872c" }
+      priv_misc_1:         { addr: "0x0008841c" }
+      vsec_device:         { addr: "0x0008860c" }
+      vsec_hierarchy:      { addr: "0x00088610" }
+      xp3g_status_base:    { addr: "0x0008e100" }
+      xp3g_override_base:  { addr: "0x0008e110" }
+      xp3g_value_base:     { addr: "0x0008e120" }
+      opt_gen23:           { addr: "0x0082057c" }
+      opt_gen3:            { addr: "0x00820580" }
+      opt_magic:           { addr: "0x00820520" }
+
+  pcie_retrain:
+    patch: pcie-gen2-probe-retrain.patch
+    registers:
+      link_config_0: { addr: "0x8c040" }
+      fuse_override: { addr: "0x8872c" }
+      pl_cya_0:      { addr: "0x8c2c0" }
+
+  bar1_resize:
+    patch: bar1-resize-unlock.patch
+    registers: {}
+
+  gpu_name:
+    patch: name-string.patch
+    registers: {}
+
+  persistence:
+    patch: persistent-sw-state.patch
+    registers: {}
+
+  late_pma:
+    patch: late-pma.patch
+    registers: {}
+
+  bar0_pramin_clamp:
+    patch: bar0-pramin-clamp.patch
+    registers: {}
+
+  ce_scrub:
+    patch: ce-scrub-workarounds.patch
+    registers: {}
+
+  booter_verify:
+    patch: booter-verify.patch
+    registers: {}

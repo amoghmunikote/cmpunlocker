@@ -1,0 +1,38 @@
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c	2026-08-24 06:24:58.271317906 +0000
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c	2026-08-24 06:24:58.271317906 +0000
+@@ -4932,8 +4932,20 @@
+ 
+             GPU_REG_WR32(pGpu, 0x0082381cU, 0x88888888U);
+             GPU_REG_WR32(pGpu, 0x00823820U, 0x00000008U);
+-            GPU_REG_WR32(pGpu, 0x009a0204U, cfg1Value);
+-            GPU_REG_WR32(pGpu, 0x00100ce0U, lmrValue);
++            {
++                NvU32 fbpaDis = GPU_REG_RD32(pGpu, 0x00820368U);
++                if (fbpaDis == 0x003FC000U)
++                {
++                    GPU_REG_WR32(pGpu, 0x009a0204U, cfg1Value);
++                    GPU_REG_WR32(pGpu, 0x00100ce0U, lmrValue);
++                }
++                else
++                {
++                    NV_PRINTF(LEVEL_ERROR,
++                        "SEC2_DEBUG: FLOORSWEEP MISMATCH fbpaDisable=0x%08x expected=0x003fc000 - SKIPPING CFG1/LMR geometry override\n",
++                        fbpaDis);
++                }
++            }
+ 
+             NV_PRINTF(LEVEL_ERROR,
+                       "SEC2_DEBUG: POST-WRITE SS0=0x%08x SS1=0x%08x "
+@@ -5580,6 +5592,12 @@
+                                     ? 0x0000001000000000ULL
+                                     : 0x0000000A00000000ULL;
+             NvU64 stockFbBytes  = 0x0000000200000000ULL;
++            if (GPU_REG_RD32(pGpu, 0x00820368U) != 0x003FC000U)
++            {
++                NV_PRINTF(LEVEL_ERROR,
++                    "SEC2_DEBUG: FLOORSWEEP MISMATCH - keeping stock fb_length\n");
++                targetFbBytes = stockFbBytes;
++            }
+             NvU32 numRegions = pFbRegionInfoParams->numFBRegions;
+ 
+             NV_PRINTF(LEVEL_ERROR,
