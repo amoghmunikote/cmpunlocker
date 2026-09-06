@@ -21,7 +21,7 @@
 +            #define PCIE_GEN2_OPT_GEN3_ADDR         0x00820580U
 +            #define PCIE_GEN2_OPT_MAGIC_ADDR        0x00820520U
 +            #define PCIE_LINK_SPEED_OF(stat)        (((stat) >> 16) & 0xFU)
-+            const NvU32 PCIE_GEN2_LINK_SPEED = 0x00000002U;
++            const NvU32 PCIE_GEN2_LINK_SPEED = 0x00000003U;
 +            const NvU32 PCIE_GEN2_PL_LINK_RATE_VALUE = 0x00240036U;
 +
 +            NvU32 capBefore = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP_ADDR);
@@ -215,20 +215,20 @@
 +                lc2 = (lc2 & ~0x000F0000U) | 0x000F0000U;
 +                GPU_REG_WR32(pGpu, PCIE_GEN2_LINK_CTRL_2_ADDR, lc2);
 +                cya0 = GPU_REG_RD32(pGpu, 0x0008c2c0U);
-+                cya0 = cya0 & ~(1U << 2);
++                cya0 = cya0 & ~((1U << 2) | (1U << 0));
 +                GPU_REG_WR32(pGpu, 0x0008c2c0U, cya0);
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: PCIe CYA_0 after clear DIS_G2: 0x%08x (bit2=%u)\n",
 +                          GPU_REG_RD32(pGpu, 0x0008c2c0U),
 +                          (GPU_REG_RD32(pGpu, 0x0008c2c0U) >> 2) & 1U);
++                GPU_REG_WR32(pGpu, 0x0008872cU, 0x0000000AU);
++                GPU_REG_WR32(pGpu, PCIE_GEN2_PL_LINK_RATE_ADDR, PCIE_GEN2_PL_LINK_RATE_VALUE);
 +                linkCfg = GPU_REG_RD32(pGpu, 0x0008c040U);
-+                linkCfg = (linkCfg & ~0x000C0000U) | (0x2U << 18);
++                linkCfg = (linkCfg & ~0x000C0000U) | (0x1U << 18);
 +                GPU_REG_WR32(pGpu, 0x0008c040U, linkCfg);
 +                NV_PRINTF(LEVEL_ERROR,
-+                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 after MAX_RATE=2: 0x%08x\n",
++                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 after MAX_RATE=8G: 0x%08x\n",
 +                          GPU_REG_RD32(pGpu, 0x0008c040U));
-+                GPU_REG_WR32(pGpu, PCIE_GEN2_PL_LINK_RATE_ADDR, PCIE_GEN2_PL_LINK_RATE_VALUE);
-+                GPU_REG_WR32(pGpu, 0x0008872cU, 0x00000006U);
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: PCIe XVE_OVR@8872c=0x%08x; skip mid-boot retrain\n",
 +                          GPU_REG_RD32(pGpu, 0x0008872cU));
@@ -285,19 +285,19 @@
 +                      GPU_REG_RD32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR_LATE));
 +            {
 +                NvU32 cyaLate = GPU_REG_RD32(pGpu, 0x0008c2c0U);
-+                cyaLate = cyaLate & ~(1U << 2);
++                cyaLate = cyaLate & ~((1U << 2) | (1U << 0));
 +                GPU_REG_WR32(pGpu, 0x0008c2c0U, cyaLate);
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: PCIe CYA_0 late clear DIS_G2: 0x%08x (bit2=%u)\n",
 +                          GPU_REG_RD32(pGpu, 0x0008c2c0U),
 +                          (GPU_REG_RD32(pGpu, 0x0008c2c0U) >> 2) & 1U);
++                GPU_REG_WR32(pGpu, 0x0008872cU, 0x0000000AU);
 +                NvU32 linkCfgLate = GPU_REG_RD32(pGpu, 0x0008c040U);
-+                linkCfgLate = (linkCfgLate & ~0x000C0000U) | (0x2U << 18);
++                linkCfgLate = (linkCfgLate & ~0x000C0000U) | (0x1U << 18);
 +                GPU_REG_WR32(pGpu, 0x0008c040U, linkCfgLate);
 +                NV_PRINTF(LEVEL_ERROR,
-+                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 late MAX_RATE=2: 0x%08x\n",
++                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 late MAX_RATE=8G: 0x%08x\n",
 +                          GPU_REG_RD32(pGpu, 0x0008c040U));
-+                GPU_REG_WR32(pGpu, 0x0008872cU, 0x00000006U);
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: PCIe XVE_OVR late=0x%08x\n",
 +                          GPU_REG_RD32(pGpu, 0x0008872cU));

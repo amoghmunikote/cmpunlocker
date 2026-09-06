@@ -36,22 +36,22 @@
 +    if (upstream == NULL)
 +    {
 +        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                      "CMP Gen2: no upstream PCIe bridge; skipping link retrain\n");
++                      "CMP Gen3: no upstream PCIe bridge; skipping link retrain\n");
 +        return;
 +    }
 +    bar0 = ioremap(pci_resource_start(gpu, 0), 0x90000);
 +    if (bar0 == NULL)
 +    {
 +        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                      "CMP Gen2: cannot map BAR0; skipping link retrain\n");
++                      "CMP Gen3: cannot map BAR0; skipping link retrain\n");
 +        return;
 +    }
 +    cya0 = readl(bar0 + 0x8c2c0);
-+    writel(cya0 & ~(1U << 2), bar0 + 0x8c2c0);
-+    link_config = readl(bar0 + 0x8c040);
-+    writel((link_config & ~0x000c0000U) | (2U << 18), bar0 + 0x8c040);
-+    writel(0x00000006U, bar0 + 0x8872c);
++    writel(cya0 & ~((1U << 2) | (1U << 0)), bar0 + 0x8c2c0);
++    writel(0x0000000AU, bar0 + 0x8872c);
 +    (void)readl(bar0 + 0x8872c);
++    link_config = readl(bar0 + 0x8c040);
++    writel((link_config & ~0x000c0000U) | (1U << 18), bar0 + 0x8c040);
 +    iounmap(bar0);
 +    msleep(50);
 +    ret = pcie_capability_read_word(gpu, PCI_EXP_LNKCTL2, &gpu_ctl2);
@@ -60,8 +60,8 @@
 +    ret = pcie_capability_read_word(upstream, PCI_EXP_LNKCTL2, &upstream_ctl2);
 +    if (ret)
 +        goto capability_error;
-+    gpu_ctl2 = (gpu_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_5_0GT;
-+    upstream_ctl2 = (upstream_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_5_0GT;
++    gpu_ctl2 = (gpu_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_8_0GT;
++    upstream_ctl2 = (upstream_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_8_0GT;
 +    ret = pcie_capability_write_word(gpu, PCI_EXP_LNKCTL2, gpu_ctl2);
 +    if (ret)
 +        goto capability_error;
@@ -81,21 +81,21 @@
 +        msleep(100);
 +        ret = pcie_capability_read_word(gpu, PCI_EXP_LNKSTA, &link_status);
 +        if (!ret &&
-+            ((link_status & PCI_EXP_LNKSTA_CLS) >= PCI_EXP_LNKSTA_CLS_5_0GB))
++            ((link_status & PCI_EXP_LNKSTA_CLS) >= PCI_EXP_LNKSTA_CLS_8_0GB))
 +        {
-+            NV_DEV_PRINTF(NV_DBG_INFO, nv, "CMP Gen2: PCIe link trained to Gen%u\n",
++            NV_DEV_PRINTF(NV_DBG_INFO, nv, "CMP Gen3: PCIe link trained to Gen%u\n",
 +                          link_status & PCI_EXP_LNKSTA_CLS);
 +            return;
 +        }
 +    }
 +
 +    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                  "CMP Gen2: PCIe retrain completed without Gen2 link (status=0x%04x, ret=%d)\n",
++                  "CMP Gen3: PCIe retrain completed without Gen3 link (status=0x%04x, ret=%d)\n",
 +                  link_status, ret);
 +    return;
 +capability_error:
 +    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                  "CMP Gen2: PCIe capability access failed (%d); skipping link retrain\n", ret);
++                  "CMP Gen3: PCIe capability access failed (%d); skipping link retrain\n", ret);
  }
  
  /*
