@@ -61,6 +61,8 @@ Then perform a cold reboot (full power off, then boot).
 | JTAG (Host2Jtag register access) | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
 
+---
+
 ## Uninstall
 
 To uninstall cmpunlocker, run the following command:
