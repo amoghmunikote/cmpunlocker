@@ -60,7 +60,6 @@ Then perform a cold reboot (full power off, then boot).
 | Full BAR1 Size (64GB) | Working ✓ |
 | JTAG (Host2Jtag register access) | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
-| ES cards / non-standard floorsweep | Working ✓ |
 
 ## Uninstall
 
