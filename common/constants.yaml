@@ -1,27 +1,9 @@
-# Single source of truth for the card profiles and the register constants the
-# driver patches depend on.
-#
-# This file is LOAD-BEARING, not documentation. driver/build.sh reads the
-# profiles block to decide the CFG1/LMR/fb_bytes geometry it rewrites into
-# kernel_gsp.c, so an edit here changes what gets built. It also checks every
-# address under registers: against driver/patches/*.patch and fails the build if
-# one has gone stale, which is what stops this file drifting out of date again.
-#
-# Driver versions are deliberately NOT listed here. driver/VERSION already holds
-# them and is read by both driver/build.sh and install.sh; a second copy would
-# be one more thing to forget to update.
-
 gpu:
   vendor_id: "10de"
   device_ids:
-    - "20c2"   # CMP 170HX 8GB
-    - "2082"   # CMP 170HX 10GB
+    "8gb": "0x20C2"
+    "10gb": "0x2082"
 
-# Consumed by driver/build.sh. CMPUNLOCKER_CARD_PROFILE selects one.
-#   cfg1 / lmr        memory geometry written to kernel_gsp.c at build time
-#   fb_bytes          target framebuffer size for the same rewrite
-#   geometry_rewrite  false leaves the build alone and lets the driver pick
-#                     geometry per card at runtime from the PCI device ID
 profiles:
   "8gb":
     stock_mib: 8192
@@ -48,66 +30,91 @@ profiles:
     label: "mixed"
     geometry_rewrite: false
 
-# Every addr below is verified against driver/patches/*.patch at build time.
-registers:
-  compute:
-    # FEATURE_OVERRIDE_SM_SPEED_SELECT. The CMP fuses every math pipe to
-    # REDUCED_SPEED_1_32; these overrides put them back to full rate.
-    sm_speed_select_0:
-      addr: "0x0082381c"
-      value: "0x88888888"
-    sm_speed_select_1:
-      addr: "0x00823820"
-      value: "0x00000008"
+unlocks:
+  privilege_masks:
+    patch: sec2-postbl-plm-ss-cfg.patch
+    registers:
+      pjtag_plm:      { addr: "0x0000c840", value: "0xffffffff" }
+      pjtag_sec_plm:  { addr: "0x0000c848", value: "0xffffffff" }
+      xve:            { addr: "0x00088ff4", value: "0xffffffff" }
+      xve_b:          { addr: "0x00088ab4", value: "0xffffffff" }
+      xve_c:          { addr: "0x00088ff8", value: "0xffffffff" }
+      wpr:            { addr: "0x001fa7c4", value: "0xffffffff" }
+      wpr_cfg:        { addr: "0x001fa7cc", value: "0xfffff0ff" }
+      opt_plm:        { addr: "0x008200fc", value: "0xffffffff" }
+      feat:           { addr: "0x00823804", value: "0xffffffff" }
+      feat2:          { addr: "0x00823b00", value: "0xffffffff" }
+      fbpa_plm:       { addr: "0x009a0148", value: "0xffffffff" }
 
-  floorsweep:
-    # floorsweep-guard.patch only applies the geometry override when
-    # OPT_FBPA_DISABLE reads the expected value. Parts binned differently --
-    # ES cards among them -- read something else and keep stock fb_length
-    # rather than being handed a layout their memory config cannot support.
-    opt_fbpa_disable:
-      addr: "0x00820368"
-      expected: "0x003FC000"
+  compute_throughput:
+    patch: sec2-postbl-plm-ss-cfg.patch
+    registers:
+      sm_speed_select_0: { addr: "0x0082381c", value: "0x88888888" }
+      sm_speed_select_1: { addr: "0x00823820", value: "0x00000008" }
 
-  jtag:
-    # Opened by sec2-postbl-plm-ss-cfg.patch; these are what make Host2Jtag
-    # register access reachable.
-    pjtag_plm:
-      addr: "0x0000c840"
-    pjtag_sec_plm:
-      addr: "0x0000c848"
+  memory_geometry:
+    patch: sec2-postbl-plm-ss-cfg.patch
+    registers:
+      fbpa_cfg1: { addr: "0x009a0204" }
+      ltc_lmr:   { addr: "0x00100ce0" }
+      wpr2_lo:   { addr: "0x001fa824" }
+      wpr2_hi:   { addr: "0x001fa828" }
 
-  pcie:
-    target_gen: 2
-    link_speed: "0x00000002"
-    link_cap:
-      addr: "0x00088084"
-    link_cap2:
-      addr: "0x000880a4"
-    link_control_2:
-      addr: "0x000880a8"
-    link_control_status:
-      addr: "0x00088088"
-    pl_link_rate:
-      addr: "0x0008c1c0"
-      value: "0x00240036"
-    fuse_override:
-      addr: "0x0008872c"
-    priv_misc_1:
-      addr: "0x0008841c"
-    vsec_device:
-      addr: "0x0008860c"
-    vsec_hierarchy:
-      addr: "0x00088610"
-    xp3g_status_base:
-      addr: "0x0008e100"
-    xp3g_override_base:
-      addr: "0x0008e110"
-    xp3g_override_value_base:
-      addr: "0x0008e120"
-    opt_gen23:
-      addr: "0x0082057c"
-    opt_gen3:
-      addr: "0x00820580"
-    opt_magic:
-      addr: "0x00820520"
+  floorsweep_guard:
+    patch: floorsweep-guard.patch
+    registers:
+      opt_fbpa_disable: { addr: "0x00820368", value: "0x003FC000" }
+
+  pcie_gen2:
+    patch: pcie-gen2.patch
+    registers:
+      link_cap:            { addr: "0x00088084" }
+      link_cap2:           { addr: "0x000880a4" }
+      link_control_2:      { addr: "0x000880a8" }
+      link_control_status: { addr: "0x00088088" }
+      pl_link_rate:        { addr: "0x0008c1c0", value: "0x00240036" }
+      fuse_override:       { addr: "0x0008872c" }
+      priv_misc_1:         { addr: "0x0008841c" }
+      vsec_device:         { addr: "0x0008860c" }
+      vsec_hierarchy:      { addr: "0x00088610" }
+      xp3g_status_base:    { addr: "0x0008e100" }
+      xp3g_override_base:  { addr: "0x0008e110" }
+      xp3g_value_base:     { addr: "0x0008e120" }
+      opt_gen23:           { addr: "0x0082057c" }
+      opt_gen3:            { addr: "0x00820580" }
+      opt_magic:           { addr: "0x00820520" }
+
+  pcie_retrain:
+    patch: pcie-gen2-probe-retrain.patch
+    registers:
+      link_config_0: { addr: "0x8c040" }
+      fuse_override: { addr: "0x8872c" }
+      pl_cya_0:      { addr: "0x8c2c0" }
+
+  bar1_resize:
+    patch: bar1-resize-unlock.patch
+    registers: {}
+
+  gpu_name:
+    patch: name-string.patch
+    registers: {}
+
+  persistence:
+    patch: persistent-sw-state.patch
+    registers: {}
+
+  late_pma:
+    patch: late-pma.patch
+    registers: {}
+
+  bar0_pramin_clamp:
+    patch: bar0-pramin-clamp.patch
+    registers: {}
+
+  ce_scrub:
+    patch: ce-scrub-workarounds.patch
+    registers: {}
+
+  booter_verify:
+    patch: booter-verify.patch
+    registers: {}

@@ -73,13 +73,9 @@ case "${PROFILE}" in
     MIXED) PROFILE="mixed" ;;
 esac
 
-# Card geometry comes from common/constants.yaml so there is one source of
-# truth rather than a second copy here. The same step re-checks every
-# register address in that file against the patches, so it cannot quietly
-# go stale.
 CONSTANTS="${SCRIPT_DIR}/../common/constants.yaml"
 [[ -r "${CONSTANTS}" ]] || die "Missing ${CONSTANTS}"
-CONSTANTS_ENV="$(python3 "${SCRIPT_DIR}/../tools/read-constants.py" "${CONSTANTS}" "${PATCH_DIR}" "${PROFILE}")" || die "common/constants.yaml rejected (see error above)"
+CONSTANTS_ENV="$(python3 "${SCRIPT_DIR}/../tools/read-constants.py" "${CONSTANTS}" "${PATCH_DIR}" "${SCRIPT_DIR}/build.sh" "${PROFILE}")" || die "common/constants.yaml rejected (see error above)"
 eval "${CONSTANTS_ENV}"
 
 BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
