@@ -63,7 +63,10 @@ unlocks:
   floorsweep_guard:
     patch: floorsweep-guard.patch
     registers:
-      opt_fbpa_disable: { addr: "0x00820368", value: "0x003FC000" }
+      opt_fbpa_disable:             { addr: "0x00820368", value: "0x003FC000" }
+      opt_fbpa_disable_single_rank: { addr: "0x00820368", value: "0x00000CF3" }
+      fbpa_cfg1_32gb:               { addr: "0x009a0204", value: "0x02779000" }
+      mmu_local_memory_range_32gb:  { addr: "0x00100ce0", value: "0x0000020A" }
 
   pcie_gen2:
     patch: pcie-gen2.patch
