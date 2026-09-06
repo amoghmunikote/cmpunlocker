@@ -60,6 +60,22 @@ Then perform a cold reboot (full power off, then boot).
 | Full BAR1 Size (64GB) | Working ✓ |
 | JTAG (Host2Jtag register access) | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
+| ES cards / non-standard floorsweep | Working ✓ |
+
+### ES cards
+
+The memory geometry override assumes a specific FBPA floorsweep. ES parts,
+and any card binned differently, do not always match it, and applying the
+override anyway gives the GPU a framebuffer layout its memory config does not
+support: the driver then fails during `RmInitAdapter` and the card never comes
+up.
+
+`floorsweep-guard.patch` reads `OPT_FBPA_DISABLE` (`0x00820368`) before the
+override and only applies the CFG1/LMR geometry write when it reads the
+expected `0x003FC000`. On anything else it logs the mismatch and keeps the
+stock `fb_length`, so the card boots normally with its real memory size
+instead of failing. Every other unlock in the table above is unaffected and
+still applies.
 
 ---
 
