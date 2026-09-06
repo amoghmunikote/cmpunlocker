@@ -58,6 +58,7 @@ Then perform a cold reboot (full power off, then boot).
 | Memory geometry (64GB on 8GB cards, 40GB on 10GB cards) | Working ✓ |
 | PCIe Gen 2 speeds | Working ✓ |
 | Full BAR1 Size (64GB) | Working ✓ |
+| P2P | Working ✓ |
 | JTAG (Host2Jtag register access) | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
 
