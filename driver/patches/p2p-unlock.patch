@@ -1,6 +1,6 @@
 --- a/src/nvidia/src/kernel/gpu/gpu.c
 +++ b/src/nvidia/src/kernel/gpu/gpu.c
-@@ -2517,6 +2517,28 @@
+@@ -2517,6 +2517,52 @@
  
      pGpu->pcieP2PReadCaps = p2pCapsParams.p2pReadCapsStatus;
      pGpu->pcieP2PWriteCaps = p2pCapsParams.p2pWriteCapsStatus;
@@ -19,11 +19,35 @@
 +
 +        if ((cmpDevId == 0x20C2) || (cmpDevId == 0x2082))
 +        {
-+            pGpu->pcieP2PReadCaps  = 0;
-+            pGpu->pcieP2PWriteCaps = 0;
-+            NV_PRINTF(LEVEL_ERROR,
-+                      "CMPUNLOCK: PCIe P2P caps forced to OK (devid 0x%04x)\n",
-+                      cmpDevId);
++            //
++            // Only claim P2P if the PRI decode trap that the mailbox setup
++            // depends on can actually be armed. Its PRIV_LEVEL_MASK is fused
++            // per part: 0xFFFFFFFF means level 0 may write it.
++            //
++            // Where it cannot be armed the mailbox aperture is never
++            // programmed, and peer copies then return success while moving
++            // garbage. Measured on a g250 CMP 170HX with PLM 0xFFFFFF8F:
++            // cuMemcpyPeer reported success and 33423360 of 33554432 bytes
++            // came back wrong, only the first 128 KiB intact. A truthful
++            // "not supported" beats silent corruption.
++            //
++            NvU32 trapPlm = GPU_REG_RD32(pGpu, 0x0012277cU);
++
++            if (trapPlm == 0xFFFFFFFFU)
++            {
++                pGpu->pcieP2PReadCaps  = 0;
++                pGpu->pcieP2PWriteCaps = 0;
++                NV_PRINTF(LEVEL_ERROR,
++                          "CMPUNLOCK: PCIe P2P caps forced to OK (devid 0x%04x)\n",
++                          cmpDevId);
++            }
++            else
++            {
++                NV_PRINTF(LEVEL_ERROR,
++                          "CMPUNLOCK: P2P left unsupported, trap31 PLM 0x%08x is "
++                          "not writable so the mailbox cannot be programmed\n",
++                          trapPlm);
++            }
 +        }
 +    }
  }
@@ -31,10 +55,10 @@
  static void
 --- a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm200.c
 +++ b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm200.c
-@@ -50,6 +50,117 @@
+@@ -49,6 +49,117 @@
+  *
   * @return void
   */
- void
 +//
 +// CMPUNLOCK: PRI decode trap around the P2P mailbox setup RPC.
 +//
@@ -146,9 +170,9 @@
 +    }
 +}
 +
+ void
  kbusSetupMailboxes_GM200
  (
-     OBJGPU    *pGpu0,
 @@ -71,6 +182,8 @@
      RM_API *pRmApi1     = GPU_GET_PHYSICAL_RMAPI(pGpu1);
      NV2080_CTRL_CMD_INTERNAL_BUS_SETUP_P2P_MAILBOX_LOCAL_PARAMS  params0 = {0};
