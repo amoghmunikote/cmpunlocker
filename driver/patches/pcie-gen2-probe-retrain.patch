@@ -11,7 +11,7 @@
  
  #include <sound/core.h>             /* HDA struct snd_card */
  
-@@ -1362,6 +1366,127 @@
+@@ -1362,6 +1366,117 @@
  #endif
  }
  
@@ -45,15 +45,6 @@
 +        return;
 +    }
 +
-+    /*
-+     * OPT_DISABLE_GEN3_SPEED (0x820250) is a hardware ceiling with no software
-+     * override: when it is set - the factory state on every CMP 170HX - the PHY
-+     * cannot do 8 GT/s at all, and LINK_CAP is min(advertised, that ceiling).
-+     * Asking the LTSSM for a speed ABOVE what LINK_CAP advertises is an
-+     * illegitimate speed change: the card leaves the bus and only a chassis
-+     * power cycle brings it back. So read the fuse, clamp to LINK_CAP, and
-+     * never request more than the hardware will actually grant.
-+     */
 +    gen3_fused = ((readl(bar0 + 0x820250) & 1U) == 0U);
 +
 +    cya0 = readl(bar0 + 0x8c2c0);
@@ -74,7 +65,6 @@
 +
 +    for (; target >= 1U; target--)
 +    {
-+        /* NV_XP_PL_LINK_CONFIG_0 MAX_LINK_RATE: 1 = 8000, 2 = 5000, 3 = 2500 */
 +        rate = (target >= 3U) ? 1U : ((target == 2U) ? 2U : 3U);
 +        link_config = readl(bar0 + 0x8c040);
 +        writel((link_config & ~0x000c0000U) | (rate << 18), bar0 + 0x8c040);
@@ -139,7 +129,7 @@
  /*
   * Brings up the device on the first file open. Assumes nvl->ldata_lock is held.
   */
-@@ -1526,6 +1651,8 @@
+@@ -1526,6 +1641,8 @@
          nv->flags |= NV_FLAG_PERSISTENT_SW_STATE;
      }
  
