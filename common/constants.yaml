@@ -1,32 +1,27 @@
-driver_versions:
-  - "610.57.04"
-  - "610.43.03"
-  - "610.43.02"
+# Single source of truth for the card profiles and the register constants the
+# driver patches depend on.
+#
+# This file is LOAD-BEARING, not documentation. driver/build.sh reads the
+# profiles block to decide the CFG1/LMR/fb_bytes geometry it rewrites into
+# kernel_gsp.c, so an edit here changes what gets built. It also checks every
+# address under registers: against driver/patches/*.patch and fails the build if
+# one has gone stale, which is what stops this file drifting out of date again.
+#
+# Driver versions are deliberately NOT listed here. driver/VERSION already holds
+# them and is read by both driver/build.sh and install.sh; a second copy would
+# be one more thing to forget to update.
 
 gpu:
   vendor_id: "10de"
   device_ids:
-    - "20c2"
-    - "2082"
+    - "20c2"   # CMP 170HX 8GB
+    - "2082"   # CMP 170HX 10GB
 
-compute:
-  ss0: "0x88888888"
-  ss1: "0x00000008"
-
-pcie:
-  target_gen: 2
-  link_speed_gen2: "0x2"
-  xve_link_control_status: "0x00088088"
-  xve_link_control_2: "0x000880a8"
-  pl_link_rate_addr: "0x0008c1c0"
-  pl_link_rate_value: "0x00240036"
-  vsec_hierarchy_addr: "0x00088610"
-  vsec_device_addr: "0x0008860c"
-  xp_fuse_override_base: "0x0008e110"
-  xp_fuse_override_val_base: "0x0008e120"
-  opt_gen23_addr: "0x0082057c"
-  opt_magic_a100: "0x00200000"
-
+# Consumed by driver/build.sh. CMPUNLOCKER_CARD_PROFILE selects one.
+#   cfg1 / lmr        memory geometry written to kernel_gsp.c at build time
+#   fb_bytes          target framebuffer size for the same rewrite
+#   geometry_rewrite  false leaves the build alone and lets the driver pick
+#                     geometry per card at runtime from the PCI device ID
 profiles:
   "8gb":
     stock_mib: 8192
@@ -34,9 +29,85 @@ profiles:
     cfg1: "0x02779000"
     lmr: "0x0000020B"
     fb_bytes: "0x0000001000000000"
+    label: "64GB"
+    geometry_rewrite: true
   "10gb":
     stock_mib: 10240
     unlocked_mib: 40960
     cfg1: "0x02669000"
     lmr: "0x0000028A"
     fb_bytes: "0x0000000A00000000"
+    label: "40GB"
+    geometry_rewrite: true
+  "mixed":
+    stock_mib: 8192
+    unlocked_mib: 65536
+    cfg1: "0x02779000"
+    lmr: "0x0000020B"
+    fb_bytes: "0x0000001000000000"
+    label: "mixed"
+    geometry_rewrite: false
+
+# Every addr below is verified against driver/patches/*.patch at build time.
+registers:
+  compute:
+    # FEATURE_OVERRIDE_SM_SPEED_SELECT. The CMP fuses every math pipe to
+    # REDUCED_SPEED_1_32; these overrides put them back to full rate.
+    sm_speed_select_0:
+      addr: "0x0082381c"
+      value: "0x88888888"
+    sm_speed_select_1:
+      addr: "0x00823820"
+      value: "0x00000008"
+
+  floorsweep:
+    # floorsweep-guard.patch only applies the geometry override when
+    # OPT_FBPA_DISABLE reads the expected value. Parts binned differently --
+    # ES cards among them -- read something else and keep stock fb_length
+    # rather than being handed a layout their memory config cannot support.
+    opt_fbpa_disable:
+      addr: "0x00820368"
+      expected: "0x003FC000"
+
+  jtag:
+    # Opened by sec2-postbl-plm-ss-cfg.patch; these are what make Host2Jtag
+    # register access reachable.
+    pjtag_plm:
+      addr: "0x0000c840"
+    pjtag_sec_plm:
+      addr: "0x0000c848"
+
+  pcie:
+    target_gen: 2
+    link_speed: "0x00000002"
+    link_cap:
+      addr: "0x00088084"
+    link_cap2:
+      addr: "0x000880a4"
+    link_control_2:
+      addr: "0x000880a8"
+    link_control_status:
+      addr: "0x00088088"
+    pl_link_rate:
+      addr: "0x0008c1c0"
+      value: "0x00240036"
+    fuse_override:
+      addr: "0x0008872c"
+    priv_misc_1:
+      addr: "0x0008841c"
+    vsec_device:
+      addr: "0x0008860c"
+    vsec_hierarchy:
+      addr: "0x00088610"
+    xp3g_status_base:
+      addr: "0x0008e100"
+    xp3g_override_base:
+      addr: "0x0008e110"
+    xp3g_override_value_base:
+      addr: "0x0008e120"
+    opt_gen23:
+      addr: "0x0082057c"
+    opt_gen3:
+      addr: "0x00820580"
+    opt_magic:
+      addr: "0x00820520"
