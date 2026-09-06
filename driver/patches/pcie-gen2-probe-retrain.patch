@@ -11,12 +11,10 @@
  
  #include <sound/core.h>             /* HDA struct snd_card */
  
-@@ -1360,6 +1364,87 @@
- #if defined(NV_UVM_ENABLE)
-     nv_uvm_resume_P2P(pUuid);
+@@ -1362,6 +1366,127 @@
  #endif
-+}
-+
+ }
+ 
 +static void
 +nv_cmp170hx_retrain_gen2(nv_state_t *nv)
 +{
@@ -25,7 +23,7 @@
 +    struct pci_dev *upstream;
 +    void __iomem *bar0;
 +    u16 gpu_ctl2, upstream_ctl2, upstream_ctl, link_status = 0;
-+    u32 cya0, link_config;
++    u32 cya0, link_config, link_cap, gen3_fused, target, rate, reached = 0;
 +    int ret, attempt;
 +
 +    if ((gpu == NULL) ||
@@ -36,70 +34,112 @@
 +    if (upstream == NULL)
 +    {
 +        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                      "CMP Gen3: no upstream PCIe bridge; skipping link retrain\n");
++                      "CMP PCIe: no upstream bridge; skipping link retrain\n");
 +        return;
 +    }
 +    bar0 = ioremap(pci_resource_start(gpu, 0), 0x90000);
 +    if (bar0 == NULL)
 +    {
 +        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                      "CMP Gen3: cannot map BAR0; skipping link retrain\n");
++                      "CMP PCIe: cannot map BAR0; skipping link retrain\n");
 +        return;
 +    }
++
++    /*
++     * OPT_DISABLE_GEN3_SPEED (0x820250) is a hardware ceiling with no software
++     * override: when it is set - the factory state on every CMP 170HX - the PHY
++     * cannot do 8 GT/s at all, and LINK_CAP is min(advertised, that ceiling).
++     * Asking the LTSSM for a speed ABOVE what LINK_CAP advertises is an
++     * illegitimate speed change: the card leaves the bus and only a chassis
++     * power cycle brings it back. So read the fuse, clamp to LINK_CAP, and
++     * never request more than the hardware will actually grant.
++     */
++    gen3_fused = ((readl(bar0 + 0x820250) & 1U) == 0U);
++
 +    cya0 = readl(bar0 + 0x8c2c0);
 +    writel(cya0 & ~((1U << 2) | (1U << 0)), bar0 + 0x8c2c0);
 +    writel(0x0000000AU, bar0 + 0x8872c);
 +    (void)readl(bar0 + 0x8872c);
-+    link_config = readl(bar0 + 0x8c040);
-+    writel((link_config & ~0x000c0000U) | (1U << 18), bar0 + 0x8c040);
-+    iounmap(bar0);
-+    msleep(50);
-+    ret = pcie_capability_read_word(gpu, PCI_EXP_LNKCTL2, &gpu_ctl2);
-+    if (ret)
-+        goto capability_error;
-+    ret = pcie_capability_read_word(upstream, PCI_EXP_LNKCTL2, &upstream_ctl2);
-+    if (ret)
-+        goto capability_error;
-+    gpu_ctl2 = (gpu_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_8_0GT;
-+    upstream_ctl2 = (upstream_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | PCI_EXP_LNKCTL2_TLS_8_0GT;
-+    ret = pcie_capability_write_word(gpu, PCI_EXP_LNKCTL2, gpu_ctl2);
-+    if (ret)
-+        goto capability_error;
-+    ret = pcie_capability_write_word(upstream, PCI_EXP_LNKCTL2, upstream_ctl2);
-+    if (ret)
-+        goto capability_error;
-+    ret = pcie_capability_read_word(upstream, PCI_EXP_LNKCTL, &upstream_ctl);
-+    if (ret)
-+        goto capability_error;
-+    ret = pcie_capability_write_word(upstream, PCI_EXP_LNKCTL,
-+                                     upstream_ctl | PCI_EXP_LNKCTL_RL);
-+    if (ret)
-+        goto capability_error;
++    msleep(20);
 +
-+    for (attempt = 0; attempt < 20; attempt++)
++    link_cap = readl(bar0 + 0x88084) & 0xfU;
++    target = gen3_fused ? 3U : 2U;
++    if ((link_cap != 0U) && (target > link_cap))
++        target = link_cap;
++
++    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                  "CMP PCIe: DISABLE_GEN3_SPEED fuse %s, LINK_CAP max Gen%u, targeting Gen%u\n",
++                  gen3_fused ? "clear" : "SET (Gen2 is the ceiling)",
++                  link_cap, target);
++
++    for (; target >= 1U; target--)
 +    {
-+        msleep(100);
-+        ret = pcie_capability_read_word(gpu, PCI_EXP_LNKSTA, &link_status);
-+        if (!ret &&
-+            ((link_status & PCI_EXP_LNKSTA_CLS) >= PCI_EXP_LNKSTA_CLS_8_0GB))
++        /* NV_XP_PL_LINK_CONFIG_0 MAX_LINK_RATE: 1 = 8000, 2 = 5000, 3 = 2500 */
++        rate = (target >= 3U) ? 1U : ((target == 2U) ? 2U : 3U);
++        link_config = readl(bar0 + 0x8c040);
++        writel((link_config & ~0x000c0000U) | (rate << 18), bar0 + 0x8c040);
++        (void)readl(bar0 + 0x8c040);
++        msleep(50);
++
++        ret = pcie_capability_read_word(gpu, PCI_EXP_LNKCTL2, &gpu_ctl2);
++        if (ret)
++            goto capability_error;
++        ret = pcie_capability_read_word(upstream, PCI_EXP_LNKCTL2, &upstream_ctl2);
++        if (ret)
++            goto capability_error;
++        gpu_ctl2 = (gpu_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | (u16)target;
++        upstream_ctl2 = (upstream_ctl2 & ~PCI_EXP_LNKCTL2_TLS) | (u16)target;
++        ret = pcie_capability_write_word(gpu, PCI_EXP_LNKCTL2, gpu_ctl2);
++        if (ret)
++            goto capability_error;
++        ret = pcie_capability_write_word(upstream, PCI_EXP_LNKCTL2, upstream_ctl2);
++        if (ret)
++            goto capability_error;
++        ret = pcie_capability_read_word(upstream, PCI_EXP_LNKCTL, &upstream_ctl);
++        if (ret)
++            goto capability_error;
++        ret = pcie_capability_write_word(upstream, PCI_EXP_LNKCTL,
++                                         upstream_ctl | PCI_EXP_LNKCTL_RL);
++        if (ret)
++            goto capability_error;
++
++        for (attempt = 0; attempt < 20; attempt++)
 +        {
-+            NV_DEV_PRINTF(NV_DBG_INFO, nv, "CMP Gen3: PCIe link trained to Gen%u\n",
-+                          link_status & PCI_EXP_LNKSTA_CLS);
-+            return;
++            msleep(100);
++            ret = pcie_capability_read_word(gpu, PCI_EXP_LNKSTA, &link_status);
++            if (ret)
++                continue;
++            reached = link_status & PCI_EXP_LNKSTA_CLS;
++            if (reached >= target)
++            {
++                NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                              "CMP PCIe: link trained to Gen%u\n", reached);
++                iounmap(bar0);
++                return;
++            }
 +        }
++
++        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                      "CMP PCIe: Gen%u retrain did not take (link at Gen%u)%s\n",
++                      target, reached,
++                      (target > 1U) ? "; falling back one generation" : "");
 +    }
 +
 +    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                  "CMP Gen3: PCIe retrain completed without Gen3 link (status=0x%04x, ret=%d)\n",
-+                  link_status, ret);
++                  "CMP PCIe: retrain exhausted all generations (status=0x%04x)\n",
++                  link_status);
++    iounmap(bar0);
 +    return;
 +capability_error:
++    iounmap(bar0);
 +    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                  "CMP Gen3: PCIe capability access failed (%d); skipping link retrain\n", ret);
- }
- 
++                  "CMP PCIe: capability access failed (%d); skipping link retrain\n", ret);
++}
++
  /*
-@@ -1530,6 +1624,8 @@
+  * Brings up the device on the first file open. Assumes nvl->ldata_lock is held.
+  */
+@@ -1526,6 +1651,8 @@
          nv->flags |= NV_FLAG_PERSISTENT_SW_STATE;
      }
  
