@@ -1,0 +1,17 @@
+--- a/src/nvidia/src/kernel/gpu/gpu.c	2026-08-26 12:46:10.121250423 +0900
++++ b/src/nvidia/src/kernel/gpu/gpu.c	2026-08-26 12:46:10.149250543 +0900
+@@ -911,6 +911,14 @@
+     pGpu->idInfo.PCISubDeviceID = pGpu->pChipInfo->pciSubDeviceId;
+     pGpu->idInfo.PCIRevisionID  = pGpu->pChipInfo->pciRevisionId;
+ 
++    {
++        NvU32 cmpDevId = pGpu->pChipInfo->pciDeviceId >> 16;
++        if (cmpDevId == 0x20C2 || cmpDevId == 0x2082)
++        {
++            pGpu->pChipInfo->isCmpSku = NV_FALSE;
++        }
++    }
++
+ done:
+     if (status != NV_OK)
+     {

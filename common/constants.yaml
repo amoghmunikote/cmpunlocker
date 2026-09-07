@@ -134,3 +134,7 @@ unlocks:
   booter_verify:
     patch: booter-verify.patch
     registers: {}
+
+  cmp-sku-mask:
+    patch: cmp-sku-mask.patch
+    registers: {}

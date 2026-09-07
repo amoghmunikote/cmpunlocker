@@ -60,6 +60,7 @@ Then perform a cold reboot (full power off, then boot).
 | PCIe Gen 2 speeds | Working ✓ |
 | Full BAR1 Size (64GB) | Working ✓ |
 | JTAG (Host2Jtag register access) | Working ✓ |
+|  GPU profiling | Working ✓ |
 | Persistence across reboot (patched modules) | Working ✓ |
 
 ---
