@@ -46,6 +46,7 @@ To force a certain memory profile, use the `--profile` option:
 ```bash
 sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
 sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
+sudo ./install.sh --profile=es     # ES card → 32GB unlock
 ```
 
 Then perform a cold reboot (full power off, then boot).
@@ -55,7 +56,7 @@ Then perform a cold reboot (full power off, then boot).
 | Feature | Status |
 |---|---|
 | Full SM compute throughput (SS0/SS1) | Working ✓ |
-| Memory geometry (64GB on 8GB cards, 40GB on 10GB cards) | Working ✓ |
+| Memory geometry (64GB on 8GB cards, 40GB on 10GB cards, 32GB on ES cards) | Working ✓ |
 | PCIe Gen 2 speeds | Working ✓ |
 | Full BAR1 Size (64GB) | Working ✓ |
 | JTAG (Host2Jtag register access) | Working ✓ |
