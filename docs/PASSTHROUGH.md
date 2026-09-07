@@ -112,27 +112,43 @@ into MAILBOX0:
 `0x31` is the payload hijack working: the binary starts, is diverted, and never
 finishes. On bare metal that is the result of all 296 invocations.
 
-`0x29` is the blocker, and `acrWriteAcrVersionToBsiSecureScratch_TU10X` explains it.
-The ACR load binary requires `ACR_BINARY_VERSION` in
-`NV_PGC6_BSI_SECURE_SCRATCH_14` (`0x001180F8`, bits 23:20) to be zero, because it
-expects to be the first ACR binary to run — and it **stamps its own version there**
-on the way through. Only the unload binary clears that stamp; the source comment says
-unload "wipes out the version ... to make the next ACR load have a clean slate".
+### `0x15` is the real blocker
 
-So **Booter Load is one-shot**. Once the stamp is set, every later load returns `0x29`
-regardless of how many times it is retried. That is why a first attempt at a simple
-16-deep retry loop failed 16 times out of 16 — retrying cannot clear the stamp.
+On a **clean** guest — fresh image, freshly reset card, stock driver first confirming
+a working 8192 MiB — the histogram is `12x 0x15` and `28x 0x31`, and **no `0x29` at
+all**.
 
-On bare metal the hijack diverts the binary *before* it reaches the stamp, so the
-scratch stays zero and every call returns `0x31`. None of this is visible outside a VM.
+`0x15` is `ACR_ERROR_FLCN_REG_ACCESS`, raised in `acr_register_access_tu10x.c`.
+`acrlibBar0RegReadDmemApert_TU10X` and its write counterpart reach BAR0 through SEC2's
+DMEM aperture, then read `NV_CPWR_FALCON_EXTERRSTAT` and require `_STAT == _ACK_POS` —
+and for reads, that the value is not the `0xBADFxxxx` priv-error sentinel. The
+`NV_CSEC_BAR0_CSR` status machine fails the same way on `ERR`, `TMOUT` or `DIS`.
 
-`kgspExecuteBooterUnloadIfNeeded` cannot recover it either: it returns early when WPR2
-is down, and WPR2 is down precisely because the load failed.
+So under passthrough **SEC2's own priv accesses stop acknowledging for a subset of
+registers**: 28 hijack calls get through, 12 do not. That matches the specific
+registers observed reading back wrong in the guest — `FEAT_OVR_ECC_PLM` (`0x823800`),
+`OPT_GEN23` (`0x82057c`) and `PRIV_MISC_1`.
 
-The current candidate fix (`passthrough-acr-sequence.patch`) runs the unload ucode
-directly to clear the stamp and then retries the load, gated on the `0x29` code so the
-`0x31` hijack path is untouched. **It is committed but not yet verified end to end** —
-the guest used for testing degraded before a clean run completed.
+This is not a timing race and not a retry problem.
+
+### `0x29` is a secondary effect, and what the fix does
+
+`0x29` is `ACR_ERROR_BINARY_SEQUENCE_MISMATCH`, and
+`acrWriteAcrVersionToBsiSecureScratch_TU10X` explains it: the ACR load binary requires
+`ACR_BINARY_VERSION` in `NV_PGC6_BSI_SECURE_SCRATCH_14` (`0x001180F8`, bits 23:20) to
+be zero, and stamps its own version there on the way through. Only the unload binary
+clears it — the source comment says unload "wipes out the version ... to make the next
+ACR load have a clean slate". Confirmed live: after a good boot on bare metal that
+field reads `0x1` on every card.
+
+So Booter Load is one-shot, and once the stamp is set no amount of retrying clears it.
+That is why an early 16-deep retry loop failed 16 times out of 16.
+
+But `0x29` only shows up on a card that has already been through failed boots without
+a reset. `passthrough-acr-sequence.patch` runs the unload ucode directly to clear the
+stamp and retries, gated on `0x29` so the `0x31` hijack path is untouched. It is
+correct for that state — **but it does not fix passthrough**, because on a clean card
+the failure is `0x15` and the recovery never fires.
 
 ## Where that leaves passthrough
 
@@ -140,10 +156,9 @@ the guest used for testing degraded before a clean run completed.
   the guest and it behaves like any other GA100 at 8 GB.
 - There is currently **no way to get the unlocked configuration into a guest**. The
   host route is erased by QEMU's reset; the guest route is refused by the SEC2 booter.
-- The remaining work is on the guest side and is now a named problem rather than a
-  mystery: clear the ACR version stamp between Booter Load attempts. Whether that
-  alone is sufficient, or whether `0x15` (`ACR_ERROR_FLCN_REG_ACCESS`) is a second
-  independent failure, is still open.
+- The open question is now specific: **why do SEC2's BAR0 accesses stop being
+  acknowledged for some registers under passthrough?** The failing set is small and
+  known. Until that is answered, passthrough cannot carry the unlock.
 
 ## Reproducing
 
