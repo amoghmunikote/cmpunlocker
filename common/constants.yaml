@@ -32,7 +32,8 @@ profiles:
     geometry_rewrite: false
     detect:
       patch: floorsweep-guard.patch
-      opt_fbpa_disable: "0x00000CF3"
+      register: "0x00820368"
+      value: "0x00000CF3"
   "mixed":
     stock_mib: 8192
     unlocked_mib: 65536
