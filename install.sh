@@ -11,6 +11,7 @@ LOG_FILE="${LOG_DIR}/install_$(date +%Y%m%d_%H%M%S).log"
 PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
+CONFIGURE_PASSTHROUGH=1
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
@@ -18,9 +19,11 @@ for arg in "$@"; do
         --profile=es|--profile=ES) PROFILE_OVERRIDE="es" ;;
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
+        --no-passthrough) CONFIGURE_PASSTHROUGH=0 ;;
         -h|--help)
             cat <<'EOF'
 Usage: sudo ./install.sh [--profile=8gb|10gb|es] [--no-iommu] [--no-gen2-service]
+                        [--no-passthrough]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
@@ -29,6 +32,10 @@ Usage: sudo ./install.sh [--profile=8gb|10gb|es] [--no-iommu] [--no-gen2-service
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
+  --no-passthrough
+                  Do not set the cards up for VM passthrough. By default the
+                  unlock is made to survive being handed to vfio-pci, so a VM
+                  sees an unlocked card with only a stock NVIDIA driver in it
 
 By default the installer appends intel_iommu=on / amd_iommu=on plus iommu=pt to
 the kernel command line so the IOMMU runs in passthrough mode. This takes effect
@@ -59,7 +66,7 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 source "${SCRIPT_DIR}/common/lib.sh"
 
 banner
-step_init 6
+step_init 7
 
 step "Verifying root privileges"
 [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo ./install.sh"
@@ -287,6 +294,20 @@ CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
+step "Setting up VM passthrough"
+PASSTHROUGH_STATUS="skipped"
+if (( CONFIGURE_PASSTHROUGH == 1 )); then
+    chmod +x "${SCRIPT_DIR}/tools/passthrough-setup.sh"
+    if CMPUNLOCKER_KVER="$(uname -r)" "${SCRIPT_DIR}/tools/passthrough-setup.sh"; then
+        PASSTHROUGH_STATUS="armed"
+    else
+        PASSTHROUGH_STATUS="failed"
+        warn "passthrough setup failed; the unlock still works on this host"
+    fi
+else
+    warn "--no-passthrough given; cards are not prepared for VM passthrough"
+fi
+
 info "Configuring PCIe Gen2"
 cat > /etc/modprobe.d/cmp-pcie-gen2.conf <<'EOF'
 options nvidia NVreg_RegistryDwords="RmForceEnableGen2=1;RMPcieLinkSpeed=0x1"
@@ -449,6 +470,7 @@ step "Done"
 banner
 echo "cmpunlocker install finished!"
 echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${INVENTORY_BREAKDOWN}"
+echo "Passthrough: ${PASSTHROUGH_STATUS}"
 if [[ -n "${IOMMU_PARAMS}" && "${IOMMU_STATUS}" != "skipped" ]]; then
     echo "IOMMU:   ${IOMMU_PARAMS} (${IOMMU_STATUS})"
 else

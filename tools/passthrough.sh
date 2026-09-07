@@ -179,29 +179,58 @@ do_restore() {
     # recovering that needs a cold power cycle. So restore the GSP boot-time registers
     # first, then let the host driver boot GSP on the still-unlocked card.
     #
-    step "Restoring GSP boot-time state (still no reset)"
+    local need_reset=0
+
+    step "Restoring GSP boot-time state"
     for bdf in "$@"; do
         check_is_cmp "${bdf}"
-        python3 "${SCRIPT_DIR}/pt-regs.py" restore "${bdf}"             || warn "${bdf}: could not restore GSP boot state"
+        if ! python3 "${SCRIPT_DIR}/pt-regs.py" restore "${bdf}"; then
+            warn "${bdf}: ACR version stamp is stuck, this card needs a reset"
+            need_reset=1
+        fi
     done
+
+    #
+    # A card whose stamp is stuck was left behind by a VM that was killed rather than
+    # shut down. Nothing can clear that stamp except the Booter Unload the guest never
+    # ran, or a reset - so allow a reset here, which the arming otherwise blocks. It is
+    # safe now: the guest is gone, so no GSP is running on the card.
+    #
+    if (( need_reset == 1 )); then
+        step "Allowing a reset so the stuck stamp can be cleared"
+        rmmod "${MOD_NAME}" 2>/dev/null || true
+        for bdf in "$@"; do
+            printf 'default' > "/sys/bus/pci/devices/${bdf}/reset_method" 2>/dev/null || true
+        done
+        ok "reset re-enabled"
+    fi
 
     step "Releasing from vfio-pci"
     for bdf in "$@"; do
         echo > "/sys/bus/pci/devices/${bdf}/driver_override" 2>/dev/null || true
         echo "${bdf}" > /sys/bus/pci/drivers/vfio-pci/unbind 2>/dev/null || true
+        if (( need_reset == 1 )); then
+            echo 1 > "/sys/bus/pci/devices/${bdf}/reset" 2>/dev/null || true
+            sleep 2
+        fi
         ok "${bdf}: released"
     done
 
-    step "Reloading the host driver so the cards re-unlock"
-    stop_nvidia
-    start_nvidia
-
-    step "Re-enabling reset now that the host owns the cards again"
-    rmmod "${MOD_NAME}" 2>/dev/null || true
+    step "Giving the cards back to the host driver so they re-unlock"
     for bdf in "$@"; do
-        printf 'default' > "/sys/bus/pci/devices/${bdf}/reset_method" 2>/dev/null || true
+        echo "${bdf}" > /sys/bus/pci/drivers/nvidia/bind 2>/dev/null || true
     done
-    ok "reset_method back to default"
+    sleep 10
+    if ! nvidia_loaded; then
+        start_nvidia
+    fi
+
+    step "Re-arming for the next VM"
+    if [[ -x /usr/local/lib/cmpunlocker/passthrough-arm ]]; then
+        /usr/local/lib/cmpunlocker/passthrough-arm || warn "re-arming failed"
+    else
+        warn "passthrough arming helper missing; re-run install.sh"
+    fi
 
     step "Done"
     do_status "$@"
