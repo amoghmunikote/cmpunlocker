@@ -1,10 +1,4 @@
 // SPDX-License-Identifier: MIT
-/*
- * Set PCI_DEV_FLAGS_NO_BUS_RESET on a CMP 170HX so that neither vfio-pci nor QEMU
- * can secondary-bus-reset it. Combined with an emptied reset_method, that makes all
- * three of QEMU's reset paths fail, and QEMU then attaches the device without
- * resetting it - which is what lets a host-side unlock survive into a guest.
- */
 #include <linux/module.h>
 #include <linux/pci.h>
 
