@@ -1,0 +1,22 @@
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -5228,6 +5228,19 @@
+                       PCIE_LINK_SPEED_OF(statAfter));
+         }
+ 
++        GPU_REG_WR32(pGpu, 0x0082380cU,
++                     GPU_REG_RD32(pGpu, 0x0082380cU) | 0x00999999U);
++        GPU_REG_WR32(pGpu, 0x00823810U,
++                     GPU_REG_RD32(pGpu, 0x00823810U) | 0x003fffffU);
++        GPU_REG_WR32(pGpu, 0x0082382cU,
++                     GPU_REG_RD32(pGpu, 0x0082382cU) | 0x0000000fU);
++
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: ECC=0x%08x ECC1=0x%08x ECC2=0x%08x\n",
++                  GPU_REG_RD32(pGpu, 0x0082380cU),
++                  GPU_REG_RD32(pGpu, 0x00823810U),
++                  GPU_REG_RD32(pGpu, 0x0082382cU));
++
+         plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
+         if (plmStatus != NV_OK)
+         {
