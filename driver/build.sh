@@ -57,7 +57,6 @@ PATCH_ORDER=(
     name-string.patch
     bar1-resize-unlock.patch
     floorsweep-guard.patch
-    passthrough-booter-retry.patch
 )
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do

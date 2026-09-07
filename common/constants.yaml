@@ -107,10 +107,6 @@ unlocks:
       fuse_override: { addr: "0x8872c" }
       pl_cya_0:      { addr: "0x8c2c0" }
 
-  passthrough_booter_retry:
-    patch: passthrough-booter-retry.patch
-    registers: {}
-
   bar1_resize:
     patch: bar1-resize-unlock.patch
     registers: {}
