@@ -99,18 +99,40 @@ The unlock's register writes do land — verified live from inside the guest:
 ordinary Booter Load that follows, which returns a non-zero SEC2 mailbox and
 therefore `NV_ERR_GENERIC`, and without it GSP-RM never boots.
 
-The mailbox codes say why. `0x31` is the expected signature of cmpunlocker's payload
-hijack; the others only ever appear under virtualisation:
+The mailbox codes say why, and the resman source names them. `rmlsfm.h` defines
+`enum _ACR_STATUS`, and `acr_helper_functions_tu10x.c` writes that status straight
+into MAILBOX0:
 
-| | bare metal | guest |
-|---|---|---|
-| `0x31` (hijack took effect) | 296 | 28 – 38 |
-| `0x15` / `0x29` (booter rejected) | 0 | 220 – 292 |
+| code | name |
+|---|---|
+| `0x31` | `ACR_ERROR_BIN_STARTED_BUT_NOT_FINISHED` |
+| `0x15` | `ACR_ERROR_FLCN_REG_ACCESS` |
+| `0x29` | `ACR_ERROR_BINARY_SEQUENCE_MISMATCH` |
 
-Retrying does not help. A bounded retry of the Booter Load — resetting into RISC-V and
-reprogramming the libos boot args between attempts, exactly as the first call does —
-was implemented and tested: **all 16 retries returned the same failure.** That patch
-was removed again rather than shipped, because it costs boot time and fixes nothing.
+`0x31` is the payload hijack working: the binary starts, is diverted, and never
+finishes. On bare metal that is the result of all 296 invocations.
+
+`0x29` is the blocker, and `acrWriteAcrVersionToBsiSecureScratch_TU10X` explains it.
+The ACR load binary requires `ACR_BINARY_VERSION` in
+`NV_PGC6_BSI_SECURE_SCRATCH_14` (`0x001180F8`, bits 23:20) to be zero, because it
+expects to be the first ACR binary to run — and it **stamps its own version there**
+on the way through. Only the unload binary clears that stamp; the source comment says
+unload "wipes out the version ... to make the next ACR load have a clean slate".
+
+So **Booter Load is one-shot**. Once the stamp is set, every later load returns `0x29`
+regardless of how many times it is retried. That is why a first attempt at a simple
+16-deep retry loop failed 16 times out of 16 — retrying cannot clear the stamp.
+
+On bare metal the hijack diverts the binary *before* it reaches the stamp, so the
+scratch stays zero and every call returns `0x31`. None of this is visible outside a VM.
+
+`kgspExecuteBooterUnloadIfNeeded` cannot recover it either: it returns early when WPR2
+is down, and WPR2 is down precisely because the load failed.
+
+The current candidate fix (`passthrough-acr-sequence.patch`) runs the unload ucode
+directly to clear the stamp and then retries the load, gated on the `0x29` code so the
+`0x31` hijack path is untouched. **It is committed but not yet verified end to end** —
+the guest used for testing degraded before a clean run completed.
 
 ## Where that leaves passthrough
 
@@ -118,9 +140,10 @@ was removed again rather than shipped, because it costs boot time and fixes noth
   the guest and it behaves like any other GA100 at 8 GB.
 - There is currently **no way to get the unlocked configuration into a guest**. The
   host route is erased by QEMU's reset; the guest route is refused by the SEC2 booter.
-- Anything that changes this has to make the booter accept the hijack under
-  virtualisation. That is the one open question, and it is a firmware-behaviour
-  question, not a QEMU or IOMMU configuration question.
+- The remaining work is on the guest side and is now a named problem rather than a
+  mystery: clear the ACR version stamp between Booter Load attempts. Whether that
+  alone is sufficient, or whether `0x15` (`ACR_ERROR_FLCN_REG_ACCESS`) is a second
+  independent failure, is still open.
 
 ## Reproducing
 
