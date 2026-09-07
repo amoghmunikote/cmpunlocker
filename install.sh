@@ -15,14 +15,16 @@ for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
         --profile=10gb|--profile=10GB) PROFILE_OVERRIDE="10gb" ;;
+        --profile=es|--profile=ES) PROFILE_OVERRIDE="es" ;;
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         -h|--help)
             cat <<'EOF'
-Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
+Usage: sudo ./install.sh [--profile=8gb|10gb|es] [--no-iommu] [--no-gen2-service]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
+  --profile=es    ES / single-rank variant: label and verify as a 32GB unlock
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
@@ -34,6 +36,10 @@ on the next reboot.
 Without --profile, each unlockable GPU is classified by PCI device ID:
   10de:20c2 → 8gb / 64GB unlock
   10de:2082 → 10gb / 40GB unlock
+
+ES cards report 10de:20c2 as well, so they cannot be told apart by PCI ID and
+need --profile=es to be labelled and verified as 32GB parts. The driver picks
+their geometry from the single-rank floorsweep signature either way.
 
 Multi-GPU and mixed 8GB+10GB systems are supported in one install.
 EOF
@@ -74,6 +80,7 @@ GPU_EXPECTED=()
 GPU_CURRENT=()
 COUNT_8GB=0
 COUNT_10GB=0
+COUNT_ES=0
 COUNT_UNSUPPORTED=0
 
 for PCI_LINE in "${PCI_LINES[@]}"; do
@@ -81,6 +88,9 @@ for PCI_LINE in "${PCI_LINES[@]}"; do
     PCI_FULL="$(normalize_bus_id "${PCI}")"
     DEVID="$(echo "${PCI_LINE}" | grep -oE '10de:[0-9a-fA-F]{4}' | head -1 | cut -d: -f2 | tr '[:upper:]' '[:lower:]')"
     PROF="$(profile_from_devid "${DEVID}")"
+    if [[ "${PROFILE_OVERRIDE}" == "es" && "${PROF}" != "unsupported" ]]; then
+        PROF="es"
+    fi
     CUR_MEM="$(smi_memory_for_bus "${PCI_FULL}" || true)"
     [[ -n "${CUR_MEM}" ]] || CUR_MEM="?"
 
@@ -97,11 +107,11 @@ for PCI_LINE in "${PCI_LINES[@]}"; do
     GPU_EXPECTED+=("${EXP}")
     GPU_CURRENT+=("${CUR_MEM}")
 
-    if [[ "${PROF}" == "8gb" ]]; then
-        COUNT_8GB=$((COUNT_8GB + 1))
-    else
-        COUNT_10GB=$((COUNT_10GB + 1))
-    fi
+    case "${PROF}" in
+        8gb) COUNT_8GB=$((COUNT_8GB + 1)) ;;
+        es)  COUNT_ES=$((COUNT_ES + 1)) ;;
+        *)   COUNT_10GB=$((COUNT_10GB + 1)) ;;
+    esac
 
     if [[ "${CUR_MEM}" != "?" ]]; then
         ok "GPU ${PCI_FULL} (10de:${DEVID}) → ${PROF} (current ${CUR_MEM} MiB, expect ~${EXP} MiB unlocked)"
@@ -111,15 +121,22 @@ for PCI_LINE in "${PCI_LINES[@]}"; do
 done
 
 [[ ${#GPU_BDFS[@]} -gt 0 ]] || die "No unlockable CMP 170HX GPUs found (need 10de:20c2 and/or 10de:2082)"
+INVENTORY_BREAKDOWN="${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
+if (( COUNT_ES > 0 )); then
+    INVENTORY_BREAKDOWN="${COUNT_ES}× es"
+fi
 if (( COUNT_UNSUPPORTED > 0 )); then
-    info "Inventory: ${#GPU_BDFS[@]} unlockable (${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb), ${COUNT_UNSUPPORTED} unsupported"
+    info "Inventory: ${#GPU_BDFS[@]} unlockable (${INVENTORY_BREAKDOWN}), ${COUNT_UNSUPPORTED} unsupported"
 else
-    info "Inventory: ${#GPU_BDFS[@]} unlockable (${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb)"
+    info "Inventory: ${#GPU_BDFS[@]} unlockable (${INVENTORY_BREAKDOWN})"
 fi
 
 step "Selecting card memory profile"
 CARD_PROFILE=""
-if (( COUNT_8GB > 0 && COUNT_10GB > 0 )); then
+if (( COUNT_ES > 0 )); then
+    CARD_PROFILE="es"
+    ok "ES / single-rank variant forced via --profile=es"
+elif (( COUNT_8GB > 0 && COUNT_10GB > 0 )); then
     CARD_PROFILE="mixed"
     ok "Mixed variants detected → profile mixed (runtime geometry by PCI ID)"
     if [[ -n "${PROFILE_OVERRIDE}" ]]; then
@@ -133,7 +150,8 @@ else
     die "Internal error: no unlockable profiles counted"
 fi
 
-if [[ -n "${PROFILE_OVERRIDE}" && "${CARD_PROFILE}" != "mixed" ]]; then
+if [[ -n "${PROFILE_OVERRIDE}" && "${PROFILE_OVERRIDE}" != "es" \
+      && "${CARD_PROFILE}" != "mixed" ]]; then
     if [[ "${PROFILE_OVERRIDE}" != "${CARD_PROFILE}" ]]; then
         warn "Inventory is ${CARD_PROFILE} but --profile=${PROFILE_OVERRIDE} was forced (metadata only; geometry follows PCI ID)"
     else
@@ -148,6 +166,10 @@ case "${CARD_PROFILE}" in
         ;;
     10gb)
         info "Unlock geometry: 40GB per card (CFG1=0x02669000 LMR=0x0000028A)"
+        ;;
+    es)
+        info "Unlock geometry: 32GB per card (CFG1=0x02779000 LMR=0x0000020A)"
+        info "Chosen at runtime from the single-rank floorsweep signature"
         ;;
     mixed)
         info "Unlock geometry: 64GB for 20c2 / 40GB for 2082"
@@ -385,7 +407,7 @@ fi
 step "Done"
 banner
 echo "cmpunlocker install finished!"
-echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
+echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${INVENTORY_BREAKDOWN}"
 if [[ -n "${IOMMU_PARAMS}" && "${IOMMU_STATUS}" != "skipped" ]]; then
     echo "IOMMU:   ${IOMMU_PARAMS} (${IOMMU_STATUS})"
 else

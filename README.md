@@ -46,7 +46,7 @@ To force a certain memory profile, use the `--profile` option:
 ```bash
 sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
 sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
-sudo ./install.sh --profile=10gb   # ES card → 32GB unlock
+sudo ./install.sh --profile=es     # ES card → 32GB unlock
 ```
 
 Then perform a cold reboot (full power off, then boot).
