@@ -1,0 +1,81 @@
+--- a/src/nvidia/src/kernel/gpu/mig_mgr/kernel_mig_manager.c
++++ b/src/nvidia/src/kernel/gpu/mig_mgr/kernel_mig_manager.c
+@@ -1683,6 +1683,46 @@
+                         sizeof(*pPrivate->staticInfo.pProfiles)),
+         failed);
+ 
++    {
++        NvU32 migIdx;
++
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: MIG GI profiles from GSP: count=%u\n",
++                  pPrivate->staticInfo.pProfiles->count);
++        for (migIdx = 0; migIdx < pPrivate->staticInfo.pProfiles->count; ++migIdx)
++        {
++            NV2080_CTRL_INTERNAL_MIGMGR_PROFILE_INFO *pProf =
++                &pPrivate->staticInfo.pProfiles->table[migIdx];
++
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: MIG GI[%u] flag=0x%08x gr=%u gpc=%u vgpc=%u veid=%u sm=%u ce=%u cts=0x%llx\n",
++                      migIdx, pProf->partitionFlag, pProf->grCount,
++                      pProf->gpcCount, pProf->virtualGpcCount,
++                      pProf->veidCount, pProf->smCount,
++                      pProf->ceCount, pProf->validCTSIdMask);
++        }
++
++        if (pPrivate->staticInfo.pCIProfiles != NULL)
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: MIG CI profiles from GSP: count=%u\n",
++                      pPrivate->staticInfo.pCIProfiles->profileCount);
++            for (migIdx = 0;
++                 migIdx < pPrivate->staticInfo.pCIProfiles->profileCount;
++                 ++migIdx)
++            {
++                NV2080_CTRL_INTERNAL_MIGMGR_COMPUTE_PROFILE *pCProf =
++                    &pPrivate->staticInfo.pCIProfiles->profiles[migIdx];
++
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: MIG CI[%u] size=%u gpc=%u veid=%u sm=%u slots=%u\n",
++                          migIdx, pCProf->computeSize, pCProf->gpcCount,
++                          pCProf->veidCount, pCProf->smCount,
++                          pCProf->physicalSlots);
++            }
++        }
++    }
++
+     if (IS_GSP_CLIENT(pGpu))
+     {
+         NV_CHECK(LEVEL_ERROR, kmigmgrEnableAllLCEs(pGpu, pKernelMIGManager, NV_FALSE) == NV_OK);
+@@ -8416,6 +8456,14 @@
+         maxPhysicalSlotCount = giProfile.virtualGpcCount;
+     }
+ 
++    if (maxPhysicalSlotCount < giProfile.gpcCount)
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: MIG CI slot ceiling %u -> %u (gpcCount)\n",
++                  maxPhysicalSlotCount, giProfile.gpcCount);
++        maxPhysicalSlotCount = giProfile.gpcCount;
++    }
++
+     NV_ASSERT(pStaticInfo->pCIProfiles->profileCount <= NV_ARRAY_ELEMENTS(pParams->profiles));
+ 
+     entryCount = 0;
+@@ -10055,8 +10103,14 @@
+             }
+             count++;
+         }
+-        pParams->totalProfileCount = NV_MIN(pProfile->virtualGpcCount / profile.gpcCount,
+-                                            pProfile->veidCount / profile.veidCount);
++        {
++            NvU32 effVirtualGpcCount = (pProfile->virtualGpcCount < pProfile->gpcCount)
++                                       ? pProfile->gpcCount
++                                       : pProfile->virtualGpcCount;
++
++            pParams->totalProfileCount = NV_MIN(effVirtualGpcCount / profile.gpcCount,
++                                                pProfile->veidCount / profile.veidCount);
++        }
+         pParams->totalProfileCount = NV_MIN(pParams->totalProfileCount, pProfile->grCount);
+         pParams->totalSpansCount     = totalSpanCount;
+         pParams->profileCount        = veidSlotCount;

@@ -107,6 +107,10 @@ unlocks:
       fuse_override: { addr: "0x8872c" }
       pl_cya_0:      { addr: "0x8c2c0" }
 
+  mig:
+    patch: mig-unlock.patch
+    registers: {}
+
   bar1_resize:
     patch: bar1-resize-unlock.patch
     registers: {}
