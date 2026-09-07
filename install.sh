@@ -25,6 +25,7 @@ Usage: sudo ./install.sh [--profile=8gb|10gb|es] [--no-iommu] [--no-gen2-service
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
   --profile=es    ES / single-rank variant: label and verify as a 32GB unlock
+                  (detected automatically; this only forces it)
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
@@ -37,9 +38,9 @@ Without --profile, each unlockable GPU is classified by PCI device ID:
   10de:20c2 → 8gb / 64GB unlock
   10de:2082 → 10gb / 40GB unlock
 
-ES cards report 10de:20c2 as well, so they cannot be told apart by PCI ID and
-need --profile=es to be labelled and verified as 32GB parts. The driver picks
-their geometry from the single-rank floorsweep signature either way.
+ES cards report 10de:20c2 as well, so they cannot be told apart by PCI ID. The
+installer reads each GPU floorsweep register over BAR0 (read-only) and reclassifies
+the ones carrying the single-rank signature as es / 32GB unlock.
 
 Multi-GPU and mixed 8GB+10GB systems are supported in one install.
 EOF
@@ -73,6 +74,28 @@ if command -v nvidia-smi &>/dev/null; then
     SMI_MEM_CACHE="$(nvidia-smi --query-gpu=pci.bus_id,memory.total --format=csv,noheader,nounits 2>/dev/null || true)"
 fi
 
+DETECTED_VARIANTS=()
+if command -v python3 &>/dev/null; then
+    PROBE_BDFS=()
+    for PCI_LINE in "${PCI_LINES[@]}"; do
+        PROBE_BDFS+=("$(normalize_bus_id "$(echo "${PCI_LINE}" | awk '{print $1}')")")
+    done
+    mapfile -t DETECTED_VARIANTS < <(python3 "${SCRIPT_DIR}/tools/detect-variant.py" \
+        "${SCRIPT_DIR}/common/constants.yaml" "${PROBE_BDFS[@]}" 2>/dev/null || true)
+else
+    warn "python3 not found; cannot read the floorsweep signature to spot ES cards"
+fi
+
+variant_for_bus() {
+    local want="$1" line
+    for line in ${DETECTED_VARIANTS[@]+"${DETECTED_VARIANTS[@]}"}; do
+        if [[ "${line%% *}" == "${want}" ]]; then
+            echo "${line##* }"
+            return 0
+        fi
+    done
+}
+
 GPU_BDFS=()
 GPU_DEVIDS=()
 GPU_PROFILES=()
@@ -88,8 +111,18 @@ for PCI_LINE in "${PCI_LINES[@]}"; do
     PCI_FULL="$(normalize_bus_id "${PCI}")"
     DEVID="$(echo "${PCI_LINE}" | grep -oE '10de:[0-9a-fA-F]{4}' | head -1 | cut -d: -f2 | tr '[:upper:]' '[:lower:]')"
     PROF="$(profile_from_devid "${DEVID}")"
-    if [[ "${PROFILE_OVERRIDE}" == "es" && "${PROF}" != "unsupported" ]]; then
-        PROF="es"
+    DETECTED="$(variant_for_bus "${PCI_FULL}")"
+    PROF_NOTE=""
+    if [[ "${PROF}" != "unsupported" ]]; then
+        if [[ "${PROFILE_OVERRIDE}" == "es" ]]; then
+            PROF="es"
+        elif [[ -z "${PROFILE_OVERRIDE}" && -n "${DETECTED}" ]]; then
+            PROF="${DETECTED}"
+            PROF_NOTE=", detected from floorsweep"
+        elif [[ -n "${PROFILE_OVERRIDE}" && -n "${DETECTED}" \
+                && "${PROFILE_OVERRIDE}" != "${DETECTED}" ]]; then
+            warn "GPU ${PCI_FULL} matches the ${DETECTED} signature but --profile=${PROFILE_OVERRIDE} was given"
+        fi
     fi
     CUR_MEM="$(smi_memory_for_bus "${PCI_FULL}" || true)"
     [[ -n "${CUR_MEM}" ]] || CUR_MEM="?"
@@ -114,17 +147,18 @@ for PCI_LINE in "${PCI_LINES[@]}"; do
     esac
 
     if [[ "${CUR_MEM}" != "?" ]]; then
-        ok "GPU ${PCI_FULL} (10de:${DEVID}) → ${PROF} (current ${CUR_MEM} MiB, expect ~${EXP} MiB unlocked)"
+        ok "GPU ${PCI_FULL} (10de:${DEVID}) → ${PROF} (current ${CUR_MEM} MiB, expect ~${EXP} MiB unlocked${PROF_NOTE})"
     else
-        ok "GPU ${PCI_FULL} (10de:${DEVID}) → ${PROF} (expect ~${EXP} MiB unlocked)"
+        ok "GPU ${PCI_FULL} (10de:${DEVID}) → ${PROF} (expect ~${EXP} MiB unlocked${PROF_NOTE})"
     fi
 done
 
 [[ ${#GPU_BDFS[@]} -gt 0 ]] || die "No unlockable CMP 170HX GPUs found (need 10de:20c2 and/or 10de:2082)"
-INVENTORY_BREAKDOWN="${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
-if (( COUNT_ES > 0 )); then
-    INVENTORY_BREAKDOWN="${COUNT_ES}× es"
-fi
+INVENTORY_PARTS=()
+if (( COUNT_8GB > 0 )); then INVENTORY_PARTS+=("${COUNT_8GB}× 8gb"); fi
+if (( COUNT_10GB > 0 )); then INVENTORY_PARTS+=("${COUNT_10GB}× 10gb"); fi
+if (( COUNT_ES > 0 )); then INVENTORY_PARTS+=("${COUNT_ES}× es"); fi
+INVENTORY_BREAKDOWN="$(IFS=", "; echo "${INVENTORY_PARTS[*]}")"
 if (( COUNT_UNSUPPORTED > 0 )); then
     info "Inventory: ${#GPU_BDFS[@]} unlockable (${INVENTORY_BREAKDOWN}), ${COUNT_UNSUPPORTED} unsupported"
 else
@@ -133,9 +167,16 @@ fi
 
 step "Selecting card memory profile"
 CARD_PROFILE=""
-if (( COUNT_ES > 0 )); then
+if (( COUNT_ES > 0 && COUNT_8GB + COUNT_10GB > 0 )); then
+    CARD_PROFILE="mixed"
+    ok "ES and standard variants in one box → profile mixed (runtime geometry per card)"
+elif (( COUNT_ES > 0 )); then
     CARD_PROFILE="es"
-    ok "ES / single-rank variant forced via --profile=es"
+    if [[ "${PROFILE_OVERRIDE}" == "es" ]]; then
+        ok "ES / single-rank variant forced via --profile=es"
+    else
+        ok "ES / single-rank variant detected from the floorsweep signature"
+    fi
 elif (( COUNT_8GB > 0 && COUNT_10GB > 0 )); then
     CARD_PROFILE="mixed"
     ok "Mixed variants detected → profile mixed (runtime geometry by PCI ID)"
