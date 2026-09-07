@@ -1,0 +1,66 @@
+--- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_booter_tu102.c
++++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_booter_tu102.c
+@@ -29,6 +29,17 @@
+ 
+ #include "published/turing/tu102/dev_falcon_v4.h"
+ 
++//
++// ACR_STATUS codes the Booter reports in MAILBOX0 (rmlsfm.h, enum _ACR_STATUS).
++// The load binary stamps its version into NV_PGC6_BSI_SECURE_SCRATCH_14 and refuses
++// to run again while that stamp is set; only the unload binary clears it.
++//
++#define CMP_ACR_ERROR_BINARY_SEQUENCE_MISMATCH  0x00000029U
++#define CMP_PGC6_BSI_SECURE_SCRATCH_14          0x001180F8U
++#define CMP_ACR_VERSION_IN_SCRATCH14(g) \
++    ((GPU_REG_RD32((g), CMP_PGC6_BSI_SECURE_SCRATCH_14) >> 20) & 0xFU)
++
++
+ 
+ static NV_STATUS
+ s_executeBooterUcode_TU102
+@@ -112,6 +123,45 @@
+                                         pKernelGsp->pBooterLoadUcode,
+                                         staticCast(pKernelSec2, KernelFalcon),
+                                         mailbox0, mailbox1);
++
++    if (status != NV_OK)
++    {
++        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++        NvU32 mbox0 = kflcnRegRead_HAL(pGpu, staticCast(pKernelSec2, KernelFalcon),
++                                       NV_PFALCON_FALCON_MAILBOX0);
++
++        if (((devId == 0x20C2) || (devId == 0x2082)) &&
++            (mbox0 == CMP_ACR_ERROR_BINARY_SEQUENCE_MISMATCH) &&
++            (pKernelGsp->pBooterUnloadUcode != NULL))
++        {
++            NvU32 attempt;
++
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: BooterLoad hit ACR_ERROR_BINARY_SEQUENCE_MISMATCH; "
++                      "scratch14 ACR version=0x%x, forcing Booter Unload to clear it\n",
++                      CMP_ACR_VERSION_IN_SCRATCH14(pGpu));
++
++            for (attempt = 0; (attempt < 3) && (status != NV_OK); attempt++)
++            {
++                NV_ASSERT_OK(kflcnReset_HAL(pGpu, staticCast(pKernelSec2, KernelFalcon)));
++                (void) s_executeBooterUcode_TU102(pGpu, pKernelGsp,
++                           pKernelGsp->pBooterUnloadUcode,
++                           staticCast(pKernelSec2, KernelFalcon), 0xFF, 0xFF);
++
++                NV_ASSERT_OK(kflcnReset_HAL(pGpu, staticCast(pKernelSec2, KernelFalcon)));
++                status = s_executeBooterUcode_TU102(pGpu, pKernelGsp,
++                             pKernelGsp->pBooterLoadUcode,
++                             staticCast(pKernelSec2, KernelFalcon),
++                             mailbox0, mailbox1);
++
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: BooterLoad attempt %u after forced unload: "
++                          "status=0x%x scratch14 ACR version=0x%x\n",
++                          attempt, status, CMP_ACR_VERSION_IN_SCRATCH14(pGpu));
++            }
++        }
++    }
++
+     if (status != NV_OK)
+     {
+         NV_PRINTF(LEVEL_ERROR, "failed to execute Booter Load: 0x%x\n", status);
