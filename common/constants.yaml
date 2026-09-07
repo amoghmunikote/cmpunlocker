@@ -43,6 +43,13 @@ profiles:
     label: "mixed"
     geometry_rewrite: false
 
+passthrough:
+  module: cmp_no_bus_reset
+  gsp_boot_state:
+    wpr2_addr_lo:          { addr: "0x001FA824", value: "0x1FFFFE00" }
+    wpr2_addr_hi:          { addr: "0x001FA828", value: "0x00000000" }
+    bsi_secure_scratch_14: { addr: "0x001180F8", value: "0x00000000" }
+
 unlocks:
   privilege_masks:
     patch: sec2-postbl-plm-ss-cfg.patch

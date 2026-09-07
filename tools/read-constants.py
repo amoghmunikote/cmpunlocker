@@ -146,6 +146,39 @@ def main():
                 problems.append("profile %s: %s %s not found in %s"
                                 % (pname, kname, val, dpatch))
 
+    pt = c.get("passthrough") or {}
+    if pt:
+        regs = pt.get("gsp_boot_state") or {}
+        if not regs:
+            problems.append("passthrough block has no gsp_boot_state")
+        for rname in sorted(regs):
+            r = regs[rname] or {}
+            for key in ("addr", "value"):
+                if hex_forms(str(r.get(key, ""))) is None:
+                    problems.append("passthrough %s: %s is not hex"
+                                    % (rname, key))
+        root = os.path.join(os.path.dirname(os.path.abspath(build_sh)), "..")
+        helper = os.path.join(root, "tools", "gsp-restore.py")
+        if not os.path.isfile(helper):
+            problems.append("passthrough declared but tools/gsp-restore.py "
+                            "missing")
+
+        mod = pt.get("module")
+        if not mod:
+            problems.append("passthrough block has no module")
+        else:
+            src = os.path.join(root, "driver", "passthrough", mod + ".c")
+            if not os.path.isfile(src):
+                problems.append("passthrough module %s: %s missing"
+                                % (mod, src))
+            for rel in ("tools/passthrough.sh", "tools/passthrough-arm.sh"):
+                fp = os.path.join(root, rel)
+                if not os.path.isfile(fp):
+                    problems.append("passthrough: %s missing" % rel)
+                elif mod not in io.open(fp, encoding="utf-8").read():
+                    problems.append("passthrough module %s not referenced in %s"
+                                    % (mod, rel))
+
     if problems:
         sys.exit("error: common/constants.yaml does not match the patches:\n  "
                  + "\n  ".join(problems))
