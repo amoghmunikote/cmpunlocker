@@ -4,56 +4,40 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../common/lib.sh"
 
-KVER="$(uname -r)"
-MOD_SRC="${SCRIPT_DIR}/../driver/passthrough"
-MOD_KO="${MOD_SRC}/cmp_no_bus_reset.ko"
 MOD_NAME="cmp_no_bus_reset"
+LIB="/usr/local/lib/cmpunlocker"
+ARM="${LIB}/passthrough-arm"
+GSP="${LIB}/gsp-restore"
 
 usage() {
     cat <<'EOF'
-Usage: sudo ./tools/passthrough.sh prepare <pci-address> [<pci-address>...]
+Usage: sudo ./tools/passthrough.sh status  [<pci-address>...]
+       sudo ./tools/passthrough.sh prepare <pci-address> [<pci-address>...]
        sudo ./tools/passthrough.sh restore <pci-address> [<pci-address>...]
-       sudo ./tools/passthrough.sh status  [<pci-address>...]
 
-Hands an already-unlocked CMP 170HX to vfio-pci without letting anything reset it, so
-the unlock the host applied is still there when a guest uses the card. The guest needs
-nothing but a stock NVIDIA driver.
+install.sh already sets passthrough up. Cards are armed at every boot and the GSP
+boot registers are restored automatically whenever anything binds a card to vfio-pci,
+so assigning a GPU to a VM in Proxmox or libvirt needs no command here at all.
 
-  prepare  unlock check -> block every reset path -> release the card -> bind vfio-pci
-           -> restore the GSP boot-time registers so a guest can still boot GSP
-  restore  give the card back to the host nvidia driver and re-unlock it
-  status   show what state each card is in
+This tool is for the cases that are not automatic:
+
+  status   what state each card is in, including whether its GSP registers are clean
+  prepare  bind a card to vfio-pci right now, by hand, instead of letting the
+           hypervisor do it at VM start
+  restore  give a card back to the host driver. Needed after a VM was killed rather
+           than shut down: that leaves the ACR version stamp set, the stamp is write
+           protected once set, and the next VM would get no GPU. restore clears it and
+           re-arms the card.
 
 Addresses are full PCI addresses, e.g. 0000:04:00.0.
-
-Run this AFTER install.sh, on a host where the cards are already unlocked. Every GPU
-that stays on the host is briefly taken offline, because releasing one card requires
-unloading the whole nvidia stack; a per-device unbind wedges the GPU.
-
-Shut guests down cleanly. On a clean shutdown the guest driver tears down its own GSP
-state and the card is immediately ready for the next VM, with nothing to do on the
-host. A killed or hard-reset VM leaves that state behind and the card then needs
-`restore` followed by `prepare` again — `status` will show it.
 EOF
 }
 
 nvidia_loaded() { lsmod | grep -q '^nvidia '; }
 
-stop_nvidia() {
-    systemctl stop nvidia-persistenced 2>/dev/null || true
-    sleep 1
-    rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true
-    if nvidia_loaded; then
-        err "nvidia is still loaded; something is holding it:"
-        lsof /dev/nvidia* 2>/dev/null | awk 'NR<6'
-        die "close those and retry"
-    fi
-}
-
-start_nvidia() {
-    modprobe nvidia 2>/dev/null || true
-    sleep 8
-    systemctl start nvidia-persistenced 2>/dev/null || true
+require_installed() {
+    [[ -x "${ARM}" && -x "${GSP}" ]] \
+        || die "passthrough helpers missing from ${LIB}; run sudo ./install.sh first"
 }
 
 check_is_cmp() {
@@ -80,14 +64,6 @@ unlocked_mib() {
     [[ -n "${line}" ]] && echo "${line}" || echo "?"
 }
 
-build_module() {
-    [[ -f "${MOD_KO}" ]] && return 0
-    [[ -d "/lib/modules/${KVER}/build" ]] || die "kernel headers missing for ${KVER}"
-    info "Building ${MOD_NAME}.ko"
-    make -C "${MOD_SRC}" >/dev/null || die "failed to build ${MOD_NAME}.ko"
-    ok "Built ${MOD_KO}"
-}
-
 do_status() {
     local bdf
     printf "  %-14s %-10s %-14s %s\n" "BDF" "DRIVER" "RESET_METHOD" "MEMORY"
@@ -103,16 +79,17 @@ do_status() {
     fi
 
     for bdf in "$@"; do
-        if [[ "$(current_driver "${bdf}")" == "vfio-pci" ]]; then
+        if [[ "$(current_driver "${bdf}")" == "vfio-pci" && -x "${GSP}" ]]; then
             echo ""
             echo "  ${bdf} GSP boot state:"
-            python3 "${SCRIPT_DIR}/pt-regs.py" show "${bdf}" 2>/dev/null || true
+            "${GSP}" show "${bdf}" 2>/dev/null || true
         fi
     done
 }
 
 do_prepare() {
-    local bdf devs_arg=""
+    local bdf
+    require_installed
 
     step "Checking the cards are unlocked"
     for bdf in "$@"; do
@@ -123,78 +100,55 @@ do_prepare() {
         ok "${bdf}: ${mib} MiB unlocked"
     done
 
-    build_module
-
-    step "Blocking every reset path"
-    for bdf in "$@"; do
-        printf ' ' > "/sys/bus/pci/devices/${bdf}/reset_method"
-        [[ -z "$(cat "/sys/bus/pci/devices/${bdf}/reset_method")" ]] \
-            || die "${bdf}: could not clear reset_method"
-        ok "${bdf}: reset_method cleared (FLR and bus reset refused)"
-        devs_arg+=" devs=${bdf}"
-    done
-
-    step "Releasing the cards from the host driver"
-    warn "every GPU on this host goes offline for a few seconds"
-    stop_nvidia
-    ok "nvidia stack unloaded"
+    #
+    # Arming is what makes the handoff safe: persistence off so nothing holds the
+    # device, reset_method emptied and cmp_no_bus_reset loaded so nothing can reset it.
+    # It is the same helper the boot service runs, so both paths behave identically.
+    #
+    step "Arming the cards"
+    "${ARM}" || die "arming failed"
 
     step "Binding to vfio-pci"
-    modprobe vfio-pci disable_idle_d3=1
+    modprobe vfio-pci disable_idle_d3=1 2>/dev/null || true
     for bdf in "$@"; do
-        echo vfio-pci > "/sys/bus/pci/devices/${bdf}/driver_override"
-        echo "${bdf}" > /sys/bus/pci/drivers/vfio-pci/bind
+        if [[ "$(current_driver "${bdf}")" != "vfio-pci" ]]; then
+            echo "${bdf}" > "/sys/bus/pci/devices/${bdf}/driver/unbind" 2>/dev/null || true
+            echo vfio-pci > "/sys/bus/pci/devices/${bdf}/driver_override"
+            echo "${bdf}" > /sys/bus/pci/drivers/vfio-pci/bind 2>/dev/null || true
+        fi
         [[ "$(current_driver "${bdf}")" == "vfio-pci" ]] || die "${bdf}: vfio-pci bind failed"
         ok "${bdf} -> vfio-pci"
     done
 
-    rmmod "${MOD_NAME}" 2>/dev/null || true
-    # shellcheck disable=SC2086
-    insmod "${MOD_KO}" ${devs_arg} || die "failed to load ${MOD_NAME}.ko"
-    ok "Bus reset blocked on $# card(s)"
-
     step "Restoring GSP boot-time state"
     for bdf in "$@"; do
-        python3 "${SCRIPT_DIR}/pt-regs.py" restore "${bdf}" \
-            || die "${bdf}: could not restore GSP boot state"
+        "${GSP}" restore "${bdf}" || warn "${bdf}: GSP state not fully clean"
     done
-
-    step "Bringing the remaining GPUs back"
-    start_nvidia
 
     step "Done"
     do_status "$@"
     echo ""
-    echo "These cards are ready to pass through. In the guest, install only a stock"
-    echo "NVIDIA driver of the same version — nothing from cmpunlocker."
-    echo "To hand them back to the host: sudo ./tools/passthrough.sh restore $*"
+    echo "In the guest, install only a stock NVIDIA driver — nothing from cmpunlocker."
 }
 
 do_restore() {
-    local bdf
-
-    #
-    # Give the card back the same way it was taken: without ever resetting it. An FLR
-    # on a card whose GSP has been running leaves it unable to boot GSP again, and
-    # recovering that needs a cold power cycle. So restore the GSP boot-time registers
-    # first, then let the host driver boot GSP on the still-unlocked card.
-    #
-    local need_reset=0
+    local bdf need_reset=0
+    require_installed
 
     step "Restoring GSP boot-time state"
     for bdf in "$@"; do
         check_is_cmp "${bdf}"
-        if ! python3 "${SCRIPT_DIR}/pt-regs.py" restore "${bdf}"; then
+        if ! "${GSP}" restore "${bdf}"; then
             warn "${bdf}: ACR version stamp is stuck, this card needs a reset"
             need_reset=1
         fi
     done
 
     #
-    # A card whose stamp is stuck was left behind by a VM that was killed rather than
-    # shut down. Nothing can clear that stamp except the Booter Unload the guest never
-    # ran, or a reset - so allow a reset here, which the arming otherwise blocks. It is
-    # safe now: the guest is gone, so no GSP is running on the card.
+    # A stuck stamp was left behind by a VM that was killed rather than shut down.
+    # Nothing clears it except the Booter Unload the guest never ran, or a reset - so
+    # allow a reset here, which the arming otherwise blocks. Safe now: the guest is
+    # gone, so no GSP is running on the card.
     #
     if (( need_reset == 1 )); then
         step "Allowing a reset so the stuck stamp can be cleared"
@@ -222,15 +176,12 @@ do_restore() {
     done
     sleep 10
     if ! nvidia_loaded; then
-        start_nvidia
+        modprobe nvidia 2>/dev/null || true
+        sleep 8
     fi
 
     step "Re-arming for the next VM"
-    if [[ -x /usr/local/lib/cmpunlocker/passthrough-arm ]]; then
-        /usr/local/lib/cmpunlocker/passthrough-arm || warn "re-arming failed"
-    else
-        warn "passthrough arming helper missing; re-run install.sh"
-    fi
+    "${ARM}" || warn "re-arming failed"
 
     step "Done"
     do_status "$@"
@@ -244,7 +195,7 @@ case "${ACTION}" in
     prepare|restore)
         [[ $# -ge 1 ]] || { usage; exit 1; }
         banner
-        step_init 7
+        step_init 6
         "do_${ACTION}" "$@"
         ;;
     status)

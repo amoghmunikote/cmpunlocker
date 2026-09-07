@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Put a CMP 170HX's GSP boot-time registers back, without resetting the card.
+"""Read or put back a CMP 170HX's GSP boot-time registers, without resetting the card.
 
-Run from udev when a card binds to vfio-pci. The card keeps everything cmpunlocker
-gave it, but a guest driver still needs to boot GSP from scratch, and it refuses if
-the previous owner left WPR2 up or the ACR version stamp set.
+Run from udev when a card binds to vfio-pci, and from tools/passthrough.sh. The card
+keeps everything cmpunlocker gave it, but a guest driver still needs to boot GSP from
+scratch, and it refuses if the previous owner left WPR2 up or the ACR version stamp set.
 
-Register list comes from gsp-regs.conf, which install.sh generates from
+The register list comes from gsp-regs.conf, which install.sh generates from
 common/constants.yaml, so the values stay defined in exactly one place.
+
+usage: gsp-restore [show|restore] <pci-address>
+       (no mode means restore, which is how the udev rule calls it)
 """
 import mmap
 import os
@@ -16,62 +19,96 @@ import sys
 
 U32 = struct.Struct("<I")
 BAR0_LEN = 0x1000000
-CONF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gsp-regs.conf")
+
+# Installed next to this script by install.sh. When running straight out of the repo
+# there is no generated conf, so fall back to reading constants.yaml directly.
+HERE = os.path.dirname(os.path.abspath(__file__))
+CONF = os.path.join(HERE, "gsp-regs.conf")
+CONSTANTS = os.path.join(HERE, "..", "common", "constants.yaml")
 
 
 def load_regs():
-    out = []
-    with open(CONF) as f:
-        for line in f:
-            line = line.split("#", 1)[0].strip()
-            if not line:
-                continue
-            parts = line.split()
-            if len(parts) < 2:
-                continue
-            out.append((int(parts[0], 16), int(parts[1], 16),
-                        parts[2] if len(parts) > 2 else ""))
-    return out
+    if os.path.isfile(CONF):
+        out = []
+        with open(CONF) as f:
+            for line in f:
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                out.append((int(parts[0], 16), int(parts[1], 16),
+                            parts[2] if len(parts) > 2 else ""))
+        return out
+
+    try:
+        import yaml
+    except ImportError:
+        sys.exit("error: no %s and PyYAML is unavailable" % CONF)
+    with open(CONSTANTS) as f:
+        c = yaml.safe_load(f) or {}
+    regs = ((c.get("passthrough") or {}).get("gsp_boot_state") or {})
+    if not regs:
+        sys.exit("error: constants.yaml has no passthrough.gsp_boot_state")
+    return [(int(str(regs[n]["addr"]), 16), int(str(regs[n]["value"]), 16), n)
+            for n in sorted(regs)]
 
 
-def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: gsp-restore <pci-address>")
-    dev = sys.argv[1]
-    if not re.fullmatch(r"[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]", dev):
-        sys.exit("bad PCI address: %s" % dev)
-
+def open_bar0(dev, writable):
     path = "/sys/bus/pci/devices/%s/resource0" % dev
     if not os.path.exists(path):
         sys.exit("no BAR0 for %s" % dev)
-
-    fd = os.open(path, os.O_RDWR | os.O_SYNC)
+    flags = (os.O_RDWR if writable else os.O_RDONLY) | os.O_SYNC
+    prot = mmap.PROT_READ | (mmap.PROT_WRITE if writable else 0)
+    fd = os.open(path, flags)
     try:
-        mm = mmap.mmap(fd, BAR0_LEN, mmap.MAP_SHARED,
-                       mmap.PROT_READ | mmap.PROT_WRITE)
+        return mmap.mmap(fd, BAR0_LEN, mmap.MAP_SHARED, prot)
     finally:
         os.close(fd)
 
-    changed = []
-    stuck = []
+
+def main():
+    args = sys.argv[1:]
+    mode = "restore"
+    if args and args[0] in ("show", "restore"):
+        mode = args.pop(0)
+    if len(args) != 1:
+        sys.exit("usage: gsp-restore [show|restore] <pci-address>")
+    dev = args[0]
+    if not re.fullmatch(r"[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]", dev):
+        sys.exit("bad PCI address: %s" % dev)
+
+    regs = load_regs()
+    mm = open_bar0(dev, mode == "restore")
+    changed, stuck = [], []
     try:
         boot0 = U32.unpack_from(mm, 0)[0]
         if (boot0 >> 20) != 0x170:
             sys.exit("%s: not a GA100 (PMC_BOOT_0=0x%08X)" % (dev, boot0))
-        for addr, want, name in load_regs():
+
+        for addr, want, name in regs:
             before = U32.unpack_from(mm, addr)[0]
+            if mode == "show":
+                print("  0x%08X  %-34s = 0x%08X %s"
+                      % (addr, name, before,
+                         "(ok)" if before == want
+                         else "(needs restore -> 0x%08X)" % want))
+                continue
             if before == want:
                 continue
             U32.pack_into(mm, addr, want)
             mm.flush()
             after = U32.unpack_from(mm, addr)[0]
             if after == want:
-                changed.append("%s 0x%08X->0x%08X" % (name or hex(addr),
-                                                      before, after))
+                changed.append("%s 0x%08X->0x%08X" % (name, before, after))
             else:
-                stuck.append(name or hex(addr))
+                stuck.append(name)
     finally:
         mm.close()
+
+    if mode == "show":
+        return
 
     if stuck:
         sys.stderr.write(
@@ -84,6 +121,7 @@ def main():
         print("cmpunlocker: %s GSP boot state: %s" % (dev, ", ".join(changed)))
     elif not stuck:
         print("cmpunlocker: %s GSP boot state already clean" % dev)
+    sys.exit(1 if stuck else 0)
 
 
 main()
