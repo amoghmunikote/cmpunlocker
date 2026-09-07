@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""Read or put back a CMP 170HX's GSP boot-time registers, without resetting the card.
-
-Run from udev when a card binds to vfio-pci, and from tools/passthrough.sh. The card
-keeps everything cmpunlocker gave it, but a guest driver still needs to boot GSP from
-scratch, and it refuses if the previous owner left WPR2 up or the ACR version stamp set.
-
-The register list comes from gsp-regs.conf, which install.sh generates from
-common/constants.yaml, so the values stay defined in exactly one place.
-
-usage: gsp-restore [show|restore] <pci-address>
-       (no mode means restore, which is how the udev rule calls it)
-"""
 import mmap
 import os
 import re
@@ -20,8 +8,6 @@ import sys
 U32 = struct.Struct("<I")
 BAR0_LEN = 0x1000000
 
-# Installed next to this script by install.sh. When running straight out of the repo
-# there is no generated conf, so fall back to reading constants.yaml directly.
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONF = os.path.join(HERE, "gsp-regs.conf")
 CONSTANTS = os.path.join(HERE, "..", "common", "constants.yaml")

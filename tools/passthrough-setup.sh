@@ -1,6 +1,4 @@
 #!/bin/bash
-# Install the pieces that make passthrough work with no commands beyond install.sh.
-# Called from install.sh; safe to re-run.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,9 +25,6 @@ ok "Installed cmp_no_bus_reset.ko"
 
 mkdir -p "${LIB}"
 
-# The register values live in constants.yaml. Flatten them to a plain conf so the
-# udev hook stays fast and needs no YAML at runtime, while constants.yaml remains
-# the only place they are written down.
 python3 - "${CONSTANTS}" "${LIB}/gsp-regs.conf" <<'PY'
 import io, sys
 import yaml
@@ -81,7 +76,6 @@ systemctl enable cmpunlocker-passthrough.service &>/dev/null
 udevadm control --reload-rules 2>/dev/null || true
 ok "Enabled cmpunlocker-passthrough.service for every boot"
 
-# Apply now so passthrough works without a reboot.
 if systemctl start cmpunlocker-passthrough.service 2>/dev/null; then
     ok "Armed the cards now (no reboot needed)"
 else

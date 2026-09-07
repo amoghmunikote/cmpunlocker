@@ -1,13 +1,4 @@
 #!/bin/bash
-# Arm every CMP 170HX on this host so it can be handed to vfio-pci later without
-# losing the unlock and without hanging the handoff. Run once at boot by
-# cmpunlocker-passthrough.service; safe to re-run.
-#
-# Three things have to be true before anything binds a card to vfio-pci:
-#   1. persistence mode off, or nvidia-persistenced holds /dev/nvidiaN and the
-#      per-device unbind hangs in uninterruptible context
-#   2. reset_method emptied, so neither FLR nor PM reset can wipe the unlock
-#   3. cmp_no_bus_reset loaded, so the bus reset QEMU falls back to is refused too
 set -u
 
 MOD=cmp_no_bus_reset
@@ -20,8 +11,6 @@ if [[ ${#BDFS[@]} -eq 0 ]]; then
     exit 0
 fi
 
-# 1. persistence off, per card, by nvidia-smi index. Only cards the host driver
-#    currently owns have an index; ones already on vfio-pci need nothing here.
 if command -v nvidia-smi &>/dev/null; then
     while IFS=', ' read -r idx bus; do
         [[ -n "${idx:-}" ]] || continue
@@ -34,7 +23,6 @@ if command -v nvidia-smi &>/dev/null; then
     done < <(nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader 2>/dev/null)
 fi
 
-# 2. no FLR, no PM reset
 for bdf in "${BDFS[@]}"; do
     rm_file="/sys/bus/pci/devices/${bdf}/reset_method"
     [[ -w "${rm_file}" ]] || continue
@@ -46,7 +34,6 @@ for bdf in "${BDFS[@]}"; do
     fi
 done
 
-# 3. no bus reset
 if lsmod | grep -q "^${MOD}"; then
     rmmod "${MOD}" 2>/dev/null || true
 fi
