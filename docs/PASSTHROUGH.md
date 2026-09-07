@@ -1,185 +1,136 @@
 # VM passthrough (VFIO / Proxmox)
 
-Short version: **the unlock does not currently survive PCI passthrough**, and the
-reason is not something cmpunlocker can configure around. This page records what
-was measured so nobody has to rediscover it.
+The unlock the host applies survives into a guest. The VM needs nothing but a stock
+NVIDIA driver — no cmpunlocker inside the guest, no patched modules, no extra packages.
 
-## Test rig
-
-Everything below was measured, not inferred.
-
-| | |
-|---|---|
-| Host | Ubuntu 24.04, kernel 6.8.0-138-generic, `intel_iommu=on iommu=pt pci=realloc=on` |
-| GPU | CMP 170HX `10de:20c2`, single-rank (ES) variant, `OPT_FBPA_DISABLE=0x00000CF3` |
-| IOMMU group | the card is alone in its group, so nothing else constrains reset |
-| Hypervisor | QEMU 8.2.2, q35 + OVMF, `-device vfio-pci,host=...` |
-| Guest | Ubuntu 24.04, `nvidia-driver-open` 610.57.04 from NVIDIA's CUDA repo |
-
-## What works: the unlock survives the handoff to vfio-pci
-
-With reset disabled and a **clean full module unload**, the card sits on `vfio-pci`
-still carrying everything cmpunlocker did:
-
-```
-systemctl stop nvidia-persistenced
-printf " " > /sys/bus/pci/devices/0000:04:00.0/reset_method   # disables flr AND bus
-rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia
-modprobe vfio-pci disable_idle_d3=1
-echo vfio-pci > /sys/bus/pci/devices/0000:04:00.0/driver_override
-echo 0000:04:00.0 > /sys/bus/pci/drivers/vfio-pci/bind
+```bash
+sudo ./install.sh                                  # unlock the cards as usual
+sudo ./tools/passthrough.sh prepare 0000:04:00.0   # hand one to vfio-pci, unlock intact
 ```
 
-Reading BAR0 from the host afterwards, with the card bound to `vfio-pci`:
+Then pass the card to a VM the normal way. Measured in a guest running only
+`nvidia-driver-open` 610.57.04, with cmpunlocker absent from the VM entirely:
 
 ```
-FBPA_CFG1              = 0x02779000
-FBPA_CSTATUS           = 2048 MB/FBPA   -> 16 live FBPAs = 32768 MB
-MMU_LOCAL_MEMORY_RANGE = 0x0000020A
-FBPA_PLM / WPR_PLM / FEAT_PLM = 0xFFFFFFFF   (open)
+nvidia-smi:  NVIDIA Graphics Device, 32768 MiB
+CUDA:        31.58 GiB, 70 SMs
+             allocated 31 x 1 GiB, pattern written and read back every 4 KB
+             verify: 31 of 31 chunks correct
 ```
 
-Two details that matter and cost a wedged card each to learn:
+Both the memory unlock and the full 70-SM unlock carry through.
 
-- `echo none > reset_method` is **rejected**. The kernel wants an empty write;
-  `printf " "` is the form that takes.
-- Use a full `rmmod` of the nvidia stack, **not** a per-device unbind. Force-unbinding
-  one device while the driver still holds it logs
-  `Attempting to remove device ... with non-zero usage count!`, and the subsequent
-  `vfio-pci` bind hangs in D state. Recovering that needs a cold power cycle; an FLR
-  is not enough.
+## Why this needs a tool at all
 
-## What breaks: QEMU resets the card at attach
+A GPU handed to `vfio-pci` gets reset, and the reset puts every unlocked register back
+to stock — `CFG1` to `0x22559000`, 512 MB per FBPA, and the PLMs re-locked. QEMU does
+it at attach, before any guest code runs. That was confirmed three ways: a guest with
+no NVIDIA driver installed at all, a guest started paused so its CPU never executed,
+and a QMP hotplug into an already-running guest. All three came back stock.
 
-The moment QEMU attaches the device, the card is back to stock:
-
-```
-FBPA_CFG1              = 0x22559000     (native)
-FBPA_CSTATUS           = 512 MB/FBPA    -> 8192 MB
-MMU_LOCAL_MEMORY_RANGE = 0x00000208
-FBPA_PLM = 0xFFFFFF8F   WPR_PLM = 0x0004CB8F   FEAT_PLM = 0xFFFFFF8F   (re-locked)
-```
-
-The PLMs re-locking is the tell: this is a full chip reset, not a config-space touch.
-
-This was pinned down three independent ways, so it is not guesswork:
-
-1. **Guest with no NVIDIA driver installed at all** (fresh cloud image) — still reset.
-   So it is not the guest driver re-running devinit.
-2. **QEMU started paused (`-S`), guest CPU never executed** — already reset. So it is
-   not OVMF and not the guest kernel.
-3. **Hot-plugged into an already-running guest** via QMP `device_add` — also reset.
-
-At the time of the reset `reset_method` was empty, `disable_idle_d3=Y` and
-`power_state=D0`, so it is neither FLR nor a D3 transition. QEMU falls back to a
-**bus-level hot reset** through the parent bridge, which a per-device `reset_method`
-cannot block, and which it is allowed to do precisely because the card is alone in
-its IOMMU group.
-
-**Consequence: nothing applied on the host can reach the guest.** Installing
-cmpunlocker on the host and passing the card through does not transfer the unlock.
-
-## What also breaks: running cmpunlocker inside the guest
-
-The other direction fails too, so this is not simply a matter of moving the unlock
-into the VM.
-
-Passthrough itself is fine — the **stock** driver in the guest gives a working GPU at
-its locked 8192 MiB. With cmpunlocker's driver the GPU does not come up at all:
+Emptying `reset_method` is not enough. QEMU's `vfio_pci_reset()` tries FLR, then a
+bus-level hot reset, then a PM reset, and the bus reset goes through the parent bridge
+where a per-device setting has no say. The trace shows it plainly:
 
 ```
-NVRM: GPU0 RmInitAdapter: Cannot initialize GSP firmware RM
-NVRM: GPU 0000:00:02.0: RmInitAdapter failed! (0x62:0xffff:2119)
-$ nvidia-smi
-No devices were found
+vfio_pci_hot_reset  (0000:04:00.0) one
+vfio_pci_hot_reset_has_dep_devices 0000:04:00.0: hot reset dependent devices:
+vfio_pci_hot_reset_result 0000:04:00.0 hot reset: Success
 ```
 
-The unlock's register writes do land — verified live from inside the guest:
-`CFG1=0x02779000`, `CSTATUS=2048 MB/FBPA`, PLMs open, 32768 MB. What fails is the
-ordinary Booter Load that follows, which returns a non-zero SEC2 mailbox and
-therefore `NV_ERR_GENERIC`, and without it GSP-RM never boots.
+But QEMU only *tries*. When all three paths fail it attaches the device without
+resetting it. So the job is to make all three fail:
 
-The mailbox codes say why, and the resman source names them. `rmlsfm.h` defines
-`enum _ACR_STATUS`, and `acr_helper_functions_tu10x.c` writes that status straight
-into MAILBOX0:
+- `reset_method` emptied kills the FLR and the PM reset. Note `echo none` is rejected;
+  the kernel wants an empty write, so `printf ' '` is the form that takes.
+- `driver/passthrough/cmp_no_bus_reset.c` sets `PCI_DEV_FLAGS_NO_BUS_RESET` on the
+  card, which makes `pci_bus_resettable()` refuse, so the hot reset fails too. That
+  flag has no sysfs control, which is why it takes a small module.
 
-| code | name |
-|---|---|
-| `0x31` | `ACR_ERROR_BIN_STARTED_BUT_NOT_FINISHED` |
-| `0x15` | `ACR_ERROR_FLCN_REG_ACCESS` |
-| `0x29` | `ACR_ERROR_BINARY_SEQUENCE_MISMATCH` |
+With both in place the `hot reset: Success` line disappears and the card keeps
+everything the host gave it.
 
-`0x31` is the payload hijack working: the binary starts, is diverted, and never
-finishes. On bare metal that is the result of all 296 invocations.
+## The other half: letting the guest still boot GSP
 
-### `0x15` is the real blocker
+Not resetting the card preserves the unlock, but a guest's driver still has to boot
+GSP from scratch, and it refuses if the previous owner left GSP state behind:
 
-On a **clean** guest — fresh image, freshly reset card, stock driver first confirming
-a working 8192 MiB — the histogram is `12x 0x15` and `28x 0x31`, and **no `0x29` at
-all**.
+```
+NVRM: GPU0 _kgspBootGspRm: unexpected WPR2 already up, cannot proceed with booting GSP
+```
 
-`0x15` is `ACR_ERROR_FLCN_REG_ACCESS`, raised in `acr_register_access_tu10x.c`.
-`acrlibBar0RegReadDmemApert_TU10X` and its write counterpart reach BAR0 through SEC2's
-DMEM aperture, then read `NV_CPWR_FALCON_EXTERRSTAT` and require `_STAT == _ACK_POS` —
-and for reads, that the value is not the `0xBADFxxxx` priv-error sentinel. The
-`NV_CSEC_BAR0_CSR` status machine fails the same way on `ERR`, `TMOUT` or `DIS`.
+Clear WPR2 but leave the ACR version stamp set and it fails one step later instead,
+with Booter mailbox `0x29`, `ACR_ERROR_BINARY_SEQUENCE_MISMATCH` — the load binary
+requires `ACR_BINARY_VERSION` in `NV_PGC6_BSI_SECURE_SCRATCH_14` to be zero because it
+expects to be the first ACR binary to run.
 
-So under passthrough **SEC2's own priv accesses stop acknowledging for a subset of
-registers**: 28 hijack calls get through, 12 do not. That matches the specific
-registers observed reading back wrong in the guest — `FEAT_OVR_ECC_PLM` (`0x823800`),
-`OPT_GEN23` (`0x82057c`) and `PRIV_MISC_1`.
+So `prepare` also restores three registers to their measured post-reset values, which
+`tools/pt-regs.py` reads from `common/constants.yaml`:
 
-This is not a timing race and not a retry problem.
+| register | address | post-reset value |
+|---|---|---|
+| `NV_PFB_PRI_MMU_WPR2_ADDR_LO` | `0x001FA824` | `0x1FFFFE00` (not zero) |
+| `NV_PFB_PRI_MMU_WPR2_ADDR_HI` | `0x001FA828` | `0x00000000` |
+| `NV_PGC6_BSI_SECURE_SCRATCH_14` | `0x001180F8` | `0x00000000` |
 
-### `0x29` is a secondary effect, and what the fix does
+In practice the host driver's clean unload already leaves them that way; `prepare`
+checks and reports rather than blindly writing.
 
-`0x29` is `ACR_ERROR_BINARY_SEQUENCE_MISMATCH`, and
-`acrWriteAcrVersionToBsiSecureScratch_TU10X` explains it: the ACR load binary requires
-`ACR_BINARY_VERSION` in `NV_PGC6_BSI_SECURE_SCRATCH_14` (`0x001180F8`, bits 23:20) to
-be zero, and stamps its own version there on the way through. Only the unload binary
-clears it — the source comment says unload "wipes out the version ... to make the next
-ACR load have a clean slate". Confirmed live: after a good boot on bare metal that
-field reads `0x1` on every card.
+## Shut guests down cleanly
 
-So Booter Load is one-shot, and once the stamp is set no amount of retrying clears it.
-That is why an early 16-deep retry loop failed 16 times out of 16.
+On a clean guest shutdown the guest's own driver unloads, runs Booter Unload, and puts
+all three registers back by itself. The card is then ready for the next VM start with
+**nothing to do on the host** — verified by running two VMs back to back, both seeing
+32768 MiB, with no host intervention between them.
 
-But `0x29` only shows up on a card that has already been through failed boots without
-a reset. `passthrough-acr-sequence.patch` runs the unload ucode directly to clear the
-stamp and retries, gated on `0x29` so the `0x31` hijack path is untouched. It is
-correct for that state — **but it does not fix passthrough**, because on a clean card
-the failure is `0x15` and the recovery never fires.
+A killed or hard-reset VM does not get that chance and leaves WPR2 up and the stamp
+set. The stamp is write-protected, so it cannot simply be poked back; that card needs
 
-## Where that leaves passthrough
+```bash
+sudo ./tools/passthrough.sh restore 0000:04:00.0
+sudo ./tools/passthrough.sh prepare 0000:04:00.0
+```
 
-- Passing a **locked** CMP 170HX through works normally. Install the stock driver in
-  the guest and it behaves like any other GA100 at 8 GB.
-- There is currently **no way to get the unlocked configuration into a guest**. The
-  host route is erased by QEMU's reset; the guest route is refused by the SEC2 booter.
-- The open question is now specific: **why do SEC2's BAR0 accesses stop being
-  acknowledged for some registers under passthrough?** The failing set is small and
-  known. Until that is answered, passthrough cannot carry the unlock.
+`status` shows which state a card is in.
 
-## Reproducing
+## Things that will bite you
 
-The register probe used throughout reads BAR0 read-only via
-`/sys/bus/pci/devices/<bdf>/resource0` and needs no driver, so it works on the host,
-on a vfio-bound card, and inside the guest:
+- **Never unbind a single device from `nvidia` while the driver still holds it.** It
+  logs `Attempting to remove device ... with non-zero usage count!`, the following
+  `vfio-pci` bind hangs in D state, and recovery needs a cold power cycle — an FLR is
+  not enough. `prepare` always unloads the whole nvidia stack instead, which is why
+  every GPU on the host blips offline for a few seconds.
+- Stop `nvidia-persistenced` first or the `rmmod` fails; `prepare` does this.
+- Do not FLR a card whose GSP is running. Same wedge, same cold-cycle recovery.
+
+## Reproducing the measurements
+
+The register probe reads BAR0 read-only through
+`/sys/bus/pci/devices/<bdf>/resource0` and needs no driver, so it works on the host, on
+a vfio-bound card, and inside a guest:
 
 ```
 FBPA_CFG1              0x009A0204
 FBPA_CSTATUS           0x009A020C   RAMAMOUNT 16:0 = MB per FBPA
 MMU_LOCAL_MEMORY_RANGE 0x00100CE0
 OPT_FBPA_DISABLE       0x00820368
-FBPA_PLM               0x009A0148
-WPR_PLM                0x001FA7C4
-FEAT_PLM               0x00823804
 
 total FB = CSTATUS.RAMAMOUNT * (24 - popcount(OPT_FBPA_DISABLE))
 ```
 
-Booter mailbox codes are already logged by the existing SEC2 debug output:
+Booter mailbox codes are `ACR_STATUS` values from `rmlsfm.h`, written to MAILBOX0 by
+`acr_helper_functions_tu10x.c`. `0x31` is `ACR_ERROR_BIN_STARTED_BUT_NOT_FINISHED`,
+the expected signature of the payload hijack; `0x15` is `ACR_ERROR_FLCN_REG_ACCESS`;
+`0x29` is `ACR_ERROR_BINARY_SEQUENCE_MISMATCH`.
 
 ```
 dmesg | grep -oE "Booter failed with non-zero error code: 0x[0-9a-f]+" | sort | uniq -c
 ```
+
+## Running cmpunlocker inside the guest instead
+
+Don't — it does not work, and this tool exists because of that. With cmpunlocker's
+driver in the guest the GPU does not come up at all: the unlock's register writes land,
+but the Booter Load that follows returns `0x15` on a clean card and GSP-RM never boots.
+Bare metal returns `0x31` on all 296 invocations; a guest returns `0x15` on most of
+them. Unlocking on the host and passing the card through is the supported path.

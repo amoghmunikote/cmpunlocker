@@ -146,6 +146,22 @@ def main():
                 problems.append("profile %s: %s %s not found in %s"
                                 % (pname, kname, val, dpatch))
 
+    pt = c.get("passthrough") or {}
+    if pt:
+        regs = pt.get("gsp_boot_state") or {}
+        if not regs:
+            problems.append("passthrough block has no gsp_boot_state")
+        for rname in sorted(regs):
+            r = regs[rname] or {}
+            for key in ("addr", "value"):
+                if hex_forms(str(r.get(key, ""))) is None:
+                    problems.append("passthrough %s: %s is not hex"
+                                    % (rname, key))
+        helper = os.path.join(os.path.dirname(os.path.abspath(build_sh)),
+                              "..", "tools", "pt-regs.py")
+        if not os.path.isfile(helper):
+            problems.append("passthrough declared but tools/pt-regs.py missing")
+
     if problems:
         sys.exit("error: common/constants.yaml does not match the patches:\n  "
                  + "\n  ".join(problems))
