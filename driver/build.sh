@@ -70,6 +70,7 @@ PROFILE="${CMPUNLOCKER_CARD_PROFILE:-8gb}"
 case "${PROFILE}" in
     8GB) PROFILE="8gb" ;;
     10GB) PROFILE="10gb" ;;
+    ES) PROFILE="es" ;;
     MIXED) PROFILE="mixed" ;;
 esac
 
@@ -120,7 +121,7 @@ else
 
     info "Applying memory profile ${PROFILE} (${UNLOCK_LABEL} geometry)..."
     if [[ "${SKIP_GEOMETRY_REWRITE}" -eq 1 ]]; then
-        info "mixed profile: runtime device-id geometry (no build-time CFG1/LMR rewrite)"
+        info "${PROFILE} profile: runtime geometry (no build-time CFG1/LMR rewrite)"
     else
         python3 - "${GSP_C}" "${CFG1}" "${LMR}" "${FB_BYTES}" "${UNLOCK_LABEL}" <<'PY'
 import pathlib, re, sys
