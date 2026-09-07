@@ -4,6 +4,7 @@ import os
 import re
 import struct
 import sys
+import syslog
 
 U32 = struct.Struct("<I")
 BAR0_LEN = 0x1000000
@@ -54,6 +55,15 @@ def open_bar0(dev, writable):
         os.close(fd)
 
 
+def say(msg, err=False):
+    (sys.stderr if err else sys.stdout).write(msg + "\n")
+    try:
+        syslog.openlog("cmpunlocker", syslog.LOG_PID, syslog.LOG_DAEMON)
+        syslog.syslog(syslog.LOG_ERR if err else syslog.LOG_INFO, msg)
+    except Exception:
+        pass
+
+
 def main():
     args = sys.argv[1:]
     mode = "restore"
@@ -70,8 +80,20 @@ def main():
     changed, stuck = [], []
     try:
         boot0 = U32.unpack_from(mm, 0)[0]
+        if boot0 == 0xFFFFFFFF:
+            state = "unknown"
+            try:
+                with open("/sys/bus/pci/devices/%s/power_state" % dev) as f:
+                    state = f.read().strip()
+            except Exception:
+                pass
+            say("%s: BAR0 reads all ones (power state %s). vfio-pci has idled the "
+                "card; load it with disable_idle_d3=1 - see "
+                "/etc/modprobe.d/cmpunlocker-vfio.conf" % (dev, state), err=True)
+            sys.exit(1)
         if (boot0 >> 20) != 0x170:
-            sys.exit("%s: not a GA100 (PMC_BOOT_0=0x%08X)" % (dev, boot0))
+            say("%s: not a GA100 (PMC_BOOT_0=0x%08X)" % (dev, boot0), err=True)
+            sys.exit(1)
 
         for addr, want, name in regs:
             before = U32.unpack_from(mm, addr)[0]
@@ -97,16 +119,16 @@ def main():
         return
 
     if stuck:
-        sys.stderr.write(
+        say(
             "cmpunlocker: %s cannot clear %s - it is write protected once set.\n"
             "cmpunlocker: this happens when a VM was killed instead of shut down.\n"
             "cmpunlocker: the next VM will not see the GPU until you run:\n"
             "cmpunlocker:   sudo ./tools/passthrough.sh restore %s\n"
-            % (dev, ", ".join(stuck), dev))
+            % (dev, ", ".join(stuck), dev), err=True)
     if changed:
-        print("cmpunlocker: %s GSP boot state: %s" % (dev, ", ".join(changed)))
+        say("cmpunlocker: %s GSP boot state: %s" % (dev, ", ".join(changed)))
     elif not stuck:
-        print("cmpunlocker: %s GSP boot state already clean" % dev)
+        say("cmpunlocker: %s GSP boot state already clean" % dev)
     sys.exit(1 if stuck else 0)
 
 

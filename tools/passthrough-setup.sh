@@ -48,6 +48,11 @@ install -m 0755 "${SCRIPT_DIR}/gsp-restore.py"     "${LIB}/gsp-restore"
 install -m 0755 "${SCRIPT_DIR}/passthrough-arm.sh" "${LIB}/passthrough-arm"
 ok "Installed runtime helpers in ${LIB}"
 
+cat > /etc/modprobe.d/cmpunlocker-vfio.conf <<'EOF'
+options vfio-pci disable_idle_d3=1
+EOF
+ok "Wrote /etc/modprobe.d/cmpunlocker-vfio.conf"
+
 cat > /etc/systemd/system/cmpunlocker-passthrough.service <<'EOF'
 [Unit]
 Description=cmpunlocker: arm CMP 170HX cards for VM passthrough

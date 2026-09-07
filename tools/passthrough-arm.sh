@@ -34,6 +34,12 @@ for bdf in "${BDFS[@]}"; do
     fi
 done
 
+d3=/sys/module/vfio_pci/parameters/disable_idle_d3
+if [[ -w "${d3}" ]] && [[ "$(cat "${d3}")" != "Y" ]]; then
+    echo 1 > "${d3}" 2>/dev/null \
+        && log "vfio-pci disable_idle_d3 turned on for the running module"
+fi
+
 if lsmod | grep -q "^${MOD}"; then
     rmmod "${MOD}" 2>/dev/null || true
 fi
