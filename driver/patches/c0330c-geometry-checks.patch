@@ -1,0 +1,191 @@
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -4809,14 +4809,99 @@
+     return NV_OK;
+ }
+ 
++/* CMP_C0330C_R1 helpers begin */
++/*
++ * Experimental, cold-boot-only geometry trial for the observed C0330C card.
++ * Exact readbacks are required; they do NOT prove usable physical capacity.
++ * No rank/floorsweep writes, automatic retries, or unverified restoration.
++ */
+ static NV_STATUS
+-_kgspBootGspRm(OBJGPU *pGpu, KernelGsp *pKernelGsp, GSP_FIRMWARE *pGspFw, GPU_MASK *pGpusLockedMask, NvU8 *pbRetry)
++_kgspC0330cCheck(OBJGPU *pGpu, NvU32 cfg1, NvU32 cstatus, NvU32 lmr,
++                const char *phase)
++{
++    NvU32 index;
++    if (pGpu->idInfo.PCIDeviceID != 0x20C210DEU ||
++        GPU_REG_RD32(pGpu, 0x00000000U) != 0x170000A1U ||
++        GPU_REG_RD32(pGpu, 0x00820364U) != 0x00000852U ||
++        GPU_REG_RD32(pGpu, 0x00820368U) != 0x00C0330CU ||
++        GPU_REG_RD32(pGpu, 0x0082036cU) != 0x00C0330CU)
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "CMP_C0330C_R1: %s identity/topology mismatch; abort, cold boot required\n",
++                  phase);
++        return NV_ERR_INVALID_STATE;
++    }
++
++    for (index = 0; index < 24; index++)
++    {
++        NvU32 base, gotCfg, gotStatus, gotHbm;
++        if ((0x00C0330CU & (1U << index)) != 0)
++            continue; /* Never read a disabled FBPA aperture. */
++        base = 0x00900000U + index * 0x4000U;
++        gotCfg = GPU_REG_RD32(pGpu, base + 0x204U);
++        gotStatus = GPU_REG_RD32(pGpu, base + 0x20cU);
++        gotHbm = GPU_REG_RD32(pGpu, base + 0x38cU);
++        if (gotCfg != cfg1 || gotStatus != cstatus || gotHbm != 0x000000A7U)
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "CMP_C0330C_R1: %s FBPA[%u] CFG1=0x%08x CSTATUS=0x%08x HBM_CFG0=0x%08x; abort, cold boot required\n",
++                      phase, index, gotCfg, gotStatus, gotHbm);
++            return NV_ERR_INVALID_STATE;
++        }
++    }
++    {
++        NvU32 gotCfg = GPU_REG_RD32(pGpu, 0x009a0204U);
++        NvU32 gotStatus = GPU_REG_RD32(pGpu, 0x009a020cU);
++        NvU32 gotHbm = GPU_REG_RD32(pGpu, 0x009a038cU);
++        NvU32 gotLmr = GPU_REG_RD32(pGpu, 0x00100ce0U);
++        if (gotCfg != cfg1 || gotStatus != cstatus || gotHbm != 0x000000A7U ||
++            gotLmr != lmr)
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "CMP_C0330C_R1: %s broadcast CFG1=0x%08x CSTATUS=0x%08x HBM_CFG0=0x%08x LMR=0x%08x; abort, cold boot required\n",
++                      phase, gotCfg, gotStatus, gotHbm, gotLmr);
++            return NV_ERR_INVALID_STATE;
++        }
++    }
++    NV_PRINTF(LEVEL_ERROR,
++              "CMP_C0330C_R1: %s PASS (16 FBPAs, CFG1=0x%08x CSTATUS=0x%08x LMR=0x%08x); capacity unproven\n",
++              phase, cfg1, cstatus, lmr);
++    return NV_OK;
++}
++
++static NV_STATUS
++_kgspC0330cTryGeometry(OBJGPU *pGpu)
++{
++    NV_STATUS status;
++    /* Require the measured stock state. Warm reload/resume is not supported. */
++    status = _kgspC0330cCheck(pGpu, 0x02449000U, 0x00000200U, 0x00000208U,
++                             "stock-preflight");
++    if (status != NV_OK)
++        return status;
++
++    GPU_REG_WR32(pGpu, 0x009a0204U, 0x02779000U);
++    /* Keep the 8 GiB LMR until ALL partitions report 4096 MiB apiece. */
++    status = _kgspC0330cCheck(pGpu, 0x02779000U, 0x00001000U, 0x00000208U,
++                             "cfg1-readback");
++    if (status != NV_OK)
++        return status;
++
++    GPU_REG_WR32(pGpu, 0x00100ce0U, 0x0000020BU);
++    return _kgspC0330cCheck(pGpu, 0x02779000U, 0x00001000U, 0x0000020BU,
++                            "lmr-readback");
++}
++/* CMP_C0330C_R1 helpers end */
++
++static NV_STATUS
++_kgspBootGspRm(OBJGPU *pGpu, KernelGsp *pKernelGsp, GSP_FIRMWARE *pGspFw, GPU_MASK *pGpusLockedMask, NvU8 *pbRetry, NvBool *pbC0330cGeometryReady)
+ {
+     NV_STATUS status;
+     NvBool bEccDisabled = !kmemsysCheckReadoutEccEnablement(pGpu, GPU_GET_KERNEL_MEMORY_SYSTEM(pGpu));
+ 
+     NV_ASSERT_OR_RETURN(pbRetry != NULL, NV_ERR_INVALID_ARGUMENT);
+     *pbRetry = NV_FALSE;
++    NV_ASSERT_OR_RETURN(pbC0330cGeometryReady != NULL, NV_ERR_INVALID_ARGUMENT);
++    *pbC0330cGeometryReady = NV_FALSE;
+ 
+     // Fail early if WPR2 is up
+     if (kgspIsWpr2Up_HAL(pGpu, pKernelGsp) &&
+@@ -4941,6 +5026,14 @@
+                     NV_PRINTF(LEVEL_ERROR,
+                         "SEC2_DEBUG: single-rank variant fbpaDisable=0x%08x - applying 32GB geometry\n",
+                         fbpaDis);
++                }
++                else if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID &&
++                         fbpaDis == 0x00C0330CU)
++                {
++                    status = _kgspC0330cTryGeometry(pGpu);
++                    if (status != NV_OK)
++                        return status;
++                    *pbC0330cGeometryReady = NV_TRUE;
+                 }
+                 else
+                 {
+@@ -5298,6 +5391,7 @@
+     OBJTMR    *pTmr = GPU_GET_TIMER(pGpu);
+     GPU_MASK   gpusLockedMask = 0;
+     KernelFsp *pKernelFsp = GPU_GET_KERNEL_FSP(pGpu);
++    NvBool     bC0330cGeometryReady = NV_FALSE; /* Per GPU/init; never global. */
+ 
+     if (!IS_GSP_CLIENT(pGpu))
+         return NV_OK;
+@@ -5515,7 +5609,11 @@
+         // Depending on where and when the error occurred, subsequent boot
+         // attempts may fail.
+         //
+-        status = _kgspBootGspRm(pGpu, pKernelGsp, pGspFw, &gpusLockedMask, &bRetry);
++        status = _kgspBootGspRm(pGpu, pKernelGsp, pGspFw, &gpusLockedMask, &bRetry,
++                              &bC0330cGeometryReady);
++        /* The experimental geometry is a one-shot cold-boot trial. */
++        if (bC0330cGeometryReady)
++            bRetry = NV_FALSE;
+ 
+         //
+         // _kgspBootGspRm() may temporarily release locks to facilitate parallel GSP bootstrap on
+@@ -5589,7 +5687,50 @@
+                                     : 0x0000000A00000000ULL;
+             {
+                 NvU32 fbpaDisCheck = GPU_REG_RD32(pGpu, 0x00820368U);
+-                if (fbpaDisCheck == 0x00000CF3U)
++                if (bC0330cGeometryReady ||
++                    (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID &&
++                     fbpaDisCheck == 0x00C0330CU))
++                {
++                    NvU32 count = pFbRegionInfoParams->numFBRegions;
++                    NV2080_CTRL_CMD_FB_GET_FB_REGION_FB_REGION_INFO *pLast;
++                    if (!bC0330cGeometryReady)
++                    {
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "CMP_C0330C_R1: no verified geometry in this boot attempt; abort\n");
++                        status = NV_ERR_INVALID_STATE;
++                        goto done;
++                    }
++                    status = _kgspC0330cCheck(pGpu, 0x02779000U, 0x00001000U,
++                                             0x0000020BU, "post-gsp");
++                    if (status != NV_OK)
++                        goto done;
++                    if (count == 0 ||
++                        count > NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_MAX_ENTRIES ||
++                        (pGSCI->fb_length != 0x0000000200000000ULL &&
++                         pGSCI->fb_length != 0x0000001000000000ULL))
++                    {
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "CMP_C0330C_R1: unexpected GSP fb_length=0x%llx numRegions=%u; abort\n",
++                                  pGSCI->fb_length, count);
++                        status = NV_ERR_INVALID_STATE;
++                        goto done;
++                    }
++                    pLast = &pFbRegionInfoParams->fbRegion[count - 1];
++                    if (pLast->base > pLast->limit ||
++                        pLast->limit != pGSCI->fb_length - 1 ||
++                        pLast->reserved != pLast->limit - pLast->base + 1)
++                    {
++                        NV_PRINTF(LEVEL_ERROR,
++                                  "CMP_C0330C_R1: unexpected GSP last region base=0x%llx limit=0x%llx reserved=0x%llx; abort\n",
++                                  pLast->base, pLast->limit, pLast->reserved);
++                        status = NV_ERR_INVALID_STATE;
++                        goto done;
++                    }
++                    targetFbBytes = 0x0000001000000000ULL;
++                    NV_PRINTF(LEVEL_ERROR,
++                              "CMP_C0330C_R1: exposing experimental 64 GiB; physical capacity NOT validated\n");
++                }
++                else if (fbpaDisCheck == 0x00000CF3U)
+                 {
+                     targetFbBytes = 0x0000000800000000ULL;
+                 }

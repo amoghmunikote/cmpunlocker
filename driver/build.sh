@@ -58,6 +58,7 @@ PATCH_ORDER=(
     bar1-resize-unlock.patch
     floorsweep-guard.patch
     cmp-sku-mask.patch
+    c0330c-geometry-checks.patch
 )
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do

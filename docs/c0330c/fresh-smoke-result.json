@@ -1,0 +1,13 @@
+{
+  "status": "STAGE_PASS",
+  "stage": "smoke",
+  "hardware_capacity_validated": false,
+  "passes": 2,
+  "verified_data_bytes": 536870912,
+  "child_exit_code": 0,
+  "mismatches": 0,
+  "physical_highest_address_coverage": "unknown",
+  "reserved_memory_tested": false,
+  "monitor_errors": 0,
+  "elapsed_seconds": 7.357
+}

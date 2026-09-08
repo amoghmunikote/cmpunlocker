@@ -144,3 +144,12 @@ unlocks:
   cmp-sku-mask:
     patch: cmp-sku-mask.patch
     registers: {}
+
+  c0330c_geometry_checks:
+    patch: c0330c-geometry-checks.patch
+    registers:
+      opt_fbp_disable:  { addr: "0x00820364", value: "0x00000852" }
+      opt_fbpa_disable: { addr: "0x00820368", value: "0x00C0330C" }
+      opt_fbio_disable: { addr: "0x0082036c", value: "0x00C0330C" }
+      fbpa_cfg1:       { addr: "0x009a0204", value: "0x02779000" }
+      mmu_local_memory_range: { addr: "0x00100ce0", value: "0x0000020B" }

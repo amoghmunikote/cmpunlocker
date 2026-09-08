@@ -1,7 +1,6 @@
 --- a/src/nvidia/src/kernel/gpu/gpu_gspclient.c
 +++ b/src/nvidia/src/kernel/gpu/gpu_gspclient.c
-@@ -292,9 +292,20 @@ gpuGetNameString_FWCLIENT
- )
+@@ -293,8 +293,19 @@
  {
      GspStaticConfigInfo *pGSCI = GPU_GET_GSP_STATIC_INFO(pGpu);
 +    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;

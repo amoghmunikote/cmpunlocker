@@ -1,0 +1,40 @@
+{
+  "status": "BUILD_ONLY_PASS",
+  "driver_version": "610.43.02",
+  "target_kernel": "7.0.0-31-generic",
+  "git_base": "76f0954fbb9864df0938f9c7bd9bfdc5bf2d6636",
+  "input_manifest_sha256": "7e87d990878d21be2b7861922097f00514b7577c990151dd9d1352bff77cf9c9",
+  "source_archive_sha256": "62fbbe29527e30be32cb38b30dfad2e94db1ca87f77a58090e563c7669857e60",
+  "modules_built": true,
+  "modules_installed": false,
+  "hardware_tested": false,
+  "patched_kernel_gsp_sha256": "972734fd786c274f319828c2a4e766d51061cb180b63a60b3a774912d4d91545",
+  "modules": {
+    "nvidia": {
+      "sha256": "b15832a9fe42020e6eee04261f5427a9b4e2f998432d27e6bb17dd64c87b09f4",
+      "vermagic": "7.0.0-31-generic SMP preempt mod_unload modversions",
+      "path": "/home/kfudge/Downloads/cmp-pr-build.Q4hnPb/cmp-c0330c-build-nimq7r43/open-gpu-kernel-modules-610.43.02/kernel-open/nvidia.ko"
+    },
+    "nvidia-modeset": {
+      "sha256": "b72c7aead67ba3ef272f1bb6a0ca9fae8a1da9d01e079e6d0a6cf4807b24e15b",
+      "vermagic": "7.0.0-31-generic SMP preempt mod_unload modversions",
+      "path": "/home/kfudge/Downloads/cmp-pr-build.Q4hnPb/cmp-c0330c-build-nimq7r43/open-gpu-kernel-modules-610.43.02/kernel-open/nvidia-modeset.ko"
+    },
+    "nvidia-uvm": {
+      "sha256": "ee693518a11e64c0d4261bd3a1c847792991e51437ea22358cd109516295248e",
+      "vermagic": "7.0.0-31-generic SMP preempt mod_unload modversions",
+      "path": "/home/kfudge/Downloads/cmp-pr-build.Q4hnPb/cmp-c0330c-build-nimq7r43/open-gpu-kernel-modules-610.43.02/kernel-open/nvidia-uvm.ko"
+    },
+    "nvidia-drm": {
+      "sha256": "78039e5841bdd72ca414a47a9b87a3958f39e9142c0a5bc4c10fcc95df214757",
+      "vermagic": "7.0.0-31-generic SMP preempt mod_unload modversions",
+      "path": "/home/kfudge/Downloads/cmp-pr-build.Q4hnPb/cmp-c0330c-build-nimq7r43/open-gpu-kernel-modules-610.43.02/kernel-open/nvidia-drm.ko"
+    },
+    "nvidia-peermem": {
+      "sha256": "23bf6c8bae2f4985b961cfe9eae25f2469aa174dddf207275e35088e558d700a",
+      "vermagic": "7.0.0-31-generic SMP preempt mod_unload modversions",
+      "path": "/home/kfudge/Downloads/cmp-pr-build.Q4hnPb/cmp-c0330c-build-nimq7r43/open-gpu-kernel-modules-610.43.02/kernel-open/nvidia-peermem.ko"
+    }
+  },
+  "build_log_sha256": "172107986d9b224b75f042f725b2dcf43746b4c6f4bbda9c4507bc7427c70c3b"
+}

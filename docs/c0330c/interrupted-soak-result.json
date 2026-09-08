@@ -1,0 +1,9 @@
+{
+  "status": "STOPPED",
+  "stage": "soak",
+  "hardware_capacity_validated": false,
+  "process_exit_confirmed": true,
+  "reason": "Operator signal 15",
+  "child_exit_code": -15,
+  "elapsed_seconds": 16786.668
+}

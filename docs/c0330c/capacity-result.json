@@ -1,0 +1,12 @@
+{
+  "status": "STAGE_PASS",
+  "stage": "full",
+  "hardware_capacity_validated": false,
+  "verified_data_bytes": 67243081728,
+  "passes": 2,
+  "mismatches": 0,
+  "physical_highest_address_coverage": "unknown",
+  "reserved_memory_tested": false,
+  "monitor_errors": 0,
+  "elapsed_seconds": 93.838
+}
