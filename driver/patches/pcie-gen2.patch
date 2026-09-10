@@ -1,6 +1,51 @@
+--- /dev/null
++++ b/src/nvidia/inc/kernel/gpu/gsp/cmp_pcie.h
+@@ -0,0 +1,34 @@
++/*
++ * CMP 170HX PCIe link speed policy.
++ *
++ * Two RM paths raise the link ceiling: the mid-boot path in kernel_gsp.c and
++ * the post-Booter-Load path in kernel_gsp_tu102.c. Both have to agree on the
++ * target, so the decision lives here instead of being spelled out twice.
++ *
++ * These paths only set the ceiling. The retrain itself, including the fall
++ * back one generation at a time, happens later in nv_cmp170hx_retrain_pcie()
++ * (kernel-open/nvidia/nv.c).
++ */
++
++#ifndef CMP_PCIE_H
++#define CMP_PCIE_H
++
++#define CMP_PCIE_FUSE_OPT_DISABLE_GEN3_SPEED    0x00820250U
++
++/*
++ * The fuse is active high, so a clear bit means Gen3 is permitted. The macro
++ * name tracks what the value means rather than the polarity of the bit.
++ */
++#define CMP_PCIE_GEN3_ALLOWED(pGpu) \
++    ((GPU_REG_RD32(pGpu, CMP_PCIE_FUSE_OPT_DISABLE_GEN3_SPEED) & 1U) == 0U)
++
++#define CMP_PCIE_TARGET_GEN(pGpu)   (CMP_PCIE_GEN3_ALLOWED(pGpu) ? 3U : 2U)
++
++/*
++ * XVE LINK_CONFIG_0 MAX_LINK_RATE (bits 19:18) runs opposite to the generation
++ * number: 1 = 8.0 GT/s, 2 = 5.0 GT/s, 3 = 2.5 GT/s.
++ */
++#define CMP_PCIE_MAX_LINK_RATE(gen) \
++    (((gen) >= 3U) ? 0x1U : (((gen) == 2U) ? 0x2U : 0x3U))
++
++#endif // CMP_PCIE_H
 --- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
-@@ -4922,6 +4922,262 @@
+@@ -24,6 +24,7 @@
+ #include "resserv/rs_server.h"
+ 
+ #include "gpu/gsp/kernel_gsp.h"
++#include "gpu/gsp/cmp_pcie.h"
+ #include "gpu/falcon/kernel_falcon.h"
+ 
+ #include "kernel/core/thread_state.h"
+@@ -4922,6 +4923,262 @@
                        GPU_REG_RD32(pGpu, 0x00100ce0U));
          }
  
@@ -21,8 +66,7 @@
 +            #define PCIE_GEN2_OPT_GEN3_ADDR         0x00820580U
 +            #define PCIE_GEN2_OPT_MAGIC_ADDR        0x00820520U
 +            #define PCIE_LINK_SPEED_OF(stat)        (((stat) >> 16) & 0xFU)
-+            const NvU32 PCIE_GEN2_LINK_SPEED =
-+                (((GPU_REG_RD32(pGpu, 0x00820250U) & 1U) == 0U) ? 3U : 2U);
++            const NvU32 targetGen = CMP_PCIE_TARGET_GEN(pGpu);
 +            const NvU32 PCIE_GEN2_PL_LINK_RATE_VALUE = 0x00240036U;
 +
 +            NvU32 capBefore = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CAP_ADDR);
@@ -212,7 +256,7 @@
 +                NvU32 lc2 = GPU_REG_RD32(pGpu, PCIE_GEN2_LINK_CTRL_2_ADDR);
 +                NvU32 linkCfg;
 +                NvU32 cya0;
-+                lc2 = (lc2 & ~0x0000000FU) | PCIE_GEN2_LINK_SPEED;
++                lc2 = (lc2 & ~0x0000000FU) | targetGen;
 +                lc2 = (lc2 & ~0x000F0000U) | 0x000F0000U;
 +                GPU_REG_WR32(pGpu, PCIE_GEN2_LINK_CTRL_2_ADDR, lc2);
 +                cya0 = GPU_REG_RD32(pGpu, 0x0008c2c0U);
@@ -226,10 +270,11 @@
 +                GPU_REG_WR32(pGpu, PCIE_GEN2_PL_LINK_RATE_ADDR, PCIE_GEN2_PL_LINK_RATE_VALUE);
 +                linkCfg = GPU_REG_RD32(pGpu, 0x0008c040U);
 +                linkCfg = (linkCfg & ~0x000C0000U) |
-+                          (((PCIE_GEN2_LINK_SPEED >= 3U) ? 0x1U : 0x2U) << 18);
++                          (CMP_PCIE_MAX_LINK_RATE(targetGen) << 18);
 +                GPU_REG_WR32(pGpu, 0x0008c040U, linkCfg);
 +                NV_PRINTF(LEVEL_ERROR,
-+                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 after MAX_RATE=8G: 0x%08x\n",
++                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 after MAX_RATE=Gen%u: 0x%08x\n",
++                          targetGen,
 +                          GPU_REG_RD32(pGpu, 0x0008c040U));
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: PCIe XVE_OVR@8872c=0x%08x; skip mid-boot retrain\n",
@@ -265,7 +310,15 @@
          {
 --- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
-@@ -611,6 +611,46 @@
+@@ -26,6 +26,7 @@
+  */
+ 
+ #include "gpu/gsp/kernel_gsp.h"
++#include "gpu/gsp/cmp_pcie.h"
+ #include "gpu/gsp/gsp_init_args.h"
+ 
+ #include "gpu/rc/kernel_rc.h"
+@@ -611,6 +612,48 @@
          }
      }
  
@@ -286,7 +339,9 @@
 +                      misc1Late,
 +                      GPU_REG_RD32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR_LATE));
 +            {
++                NvU32 targetGenLate = CMP_PCIE_TARGET_GEN(pGpu);
 +                NvU32 cyaLate = GPU_REG_RD32(pGpu, 0x0008c2c0U);
++                NvU32 linkCfgLate;
 +                cyaLate = cyaLate & ~((1U << 2) | (1U << 0));
 +                GPU_REG_WR32(pGpu, 0x0008c2c0U, cyaLate);
 +                NV_PRINTF(LEVEL_ERROR,
@@ -294,13 +349,13 @@
 +                          GPU_REG_RD32(pGpu, 0x0008c2c0U),
 +                          (GPU_REG_RD32(pGpu, 0x0008c2c0U) >> 2) & 1U);
 +                GPU_REG_WR32(pGpu, 0x0008872cU, 0x0000000AU);
-+                NvU32 linkCfgLate = GPU_REG_RD32(pGpu, 0x0008c040U);
++                linkCfgLate = GPU_REG_RD32(pGpu, 0x0008c040U);
 +                linkCfgLate = (linkCfgLate & ~0x000C0000U) |
-+                              (((((GPU_REG_RD32(pGpu, 0x00820250U) & 1U) == 0U)
-+                                 ? 0x1U : 0x2U)) << 18);
++                              (CMP_PCIE_MAX_LINK_RATE(targetGenLate) << 18);
 +                GPU_REG_WR32(pGpu, 0x0008c040U, linkCfgLate);
 +                NV_PRINTF(LEVEL_ERROR,
-+                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 late MAX_RATE=8G: 0x%08x\n",
++                          "SEC2_DEBUG: PCIe LINK_CONFIG_0 late MAX_RATE=Gen%u: 0x%08x\n",
++                          targetGenLate,
 +                          GPU_REG_RD32(pGpu, 0x0008c040U));
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: PCIe XVE_OVR late=0x%08x\n",

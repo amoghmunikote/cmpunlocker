@@ -11,20 +11,45 @@
  
  #include <sound/core.h>             /* HDA struct snd_card */
  
-@@ -1362,6 +1366,117 @@
+@@ -1362,6 +1366,179 @@
  #endif
  }
  
++/*
++ * Ceiling for the CMP 170HX PCIe link retrain below:
++ *   0       disable the retrain entirely
++ *   1, 2, 3 cap the target at that generation
++ *   -1      auto (default): derive the ceiling from the fuse and from both
++ *           ends of the link
++ *
++ * A forced value is a cap, never a floor, so it can only ever ask for less
++ * than the hardware reports.
++ */
++NV_DEFINE_REG_ENTRY(CmpPcieGen, ~0U);
++MODULE_PARM_DESC(NVreg_CmpPcieGen,
++                 "CMP 170HX PCIe link retrain ceiling: 0=off, 1/2/3=cap at that generation, -1=auto (default)");
++
++/*
++ * The highest BAR0 offset touched below is the fuse block at 0x820250, so the
++ * mapping has to reach past it. Mapping only the XVE window (0x90000) puts
++ * that read outside the ioremap, where it faults instead of returning a fuse.
++ */
++#define NV_CMP_BAR0_MAP_SIZE 0x821000U
++
 +static void
-+nv_cmp170hx_retrain_gen2(nv_state_t *nv)
++nv_cmp170hx_retrain_pcie(nv_state_t *nv)
 +{
 +    nv_linux_state_t *nvl = NV_GET_NVL_FROM_NV_STATE(nv);
 +    struct pci_dev *gpu = nvl->pci_dev;
 +    struct pci_dev *upstream;
 +    void __iomem *bar0;
 +    u16 gpu_ctl2, upstream_ctl2, upstream_ctl, link_status = 0;
-+    u32 cya0, link_config, link_cap, gen3_fused, target, rate, reached = 0;
++    u32 cya0, link_config, link_cap, upstream_cap, gen3_allowed;
++    u32 target, rate, reached = 0;
 +    int ret, attempt;
++
++    if (NVreg_CmpPcieGen == 0U)
++        return;
 +
 +    if ((gpu == NULL) ||
 +        ((gpu->device != 0x20c2) && (gpu->device != 0x2082)))
@@ -37,7 +62,14 @@
 +                      "CMP PCIe: no upstream bridge; skipping link retrain\n");
 +        return;
 +    }
-+    bar0 = ioremap(pci_resource_start(gpu, 0), 0x90000);
++    if (pci_resource_len(gpu, 0) < NV_CMP_BAR0_MAP_SIZE)
++    {
++        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
++                      "CMP PCIe: BAR0 is only 0x%llx bytes; skipping link retrain\n",
++                      (unsigned long long)pci_resource_len(gpu, 0));
++        return;
++    }
++    bar0 = ioremap(pci_resource_start(gpu, 0), NV_CMP_BAR0_MAP_SIZE);
 +    if (bar0 == NULL)
 +    {
 +        NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
@@ -45,7 +77,11 @@
 +        return;
 +    }
 +
-+    gen3_fused = ((readl(bar0 + 0x820250) & 1U) == 0U);
++    /*
++     * OPT_DISABLE_GEN3_SPEED is active high, so a clear bit means Gen3 is
++     * permitted. The name below tracks what the value means, not the fuse.
++     */
++    gen3_allowed = ((readl(bar0 + 0x820250) & 1U) == 0U);
 +
 +    cya0 = readl(bar0 + 0x8c2c0);
 +    writel(cya0 & ~((1U << 2) | (1U << 0)), bar0 + 0x8c2c0);
@@ -53,18 +89,39 @@
 +    (void)readl(bar0 + 0x8872c);
 +    msleep(20);
 +
++    target = gen3_allowed ? 3U : 2U;
++
++    /* The GPU advertises its own ceiling once the CYA overrides are in place. */
 +    link_cap = readl(bar0 + 0x88084) & 0xfU;
-+    target = gen3_fused ? 3U : 2U;
 +    if ((link_cap != 0U) && (target > link_cap))
 +        target = link_cap;
 +
++    /*
++     * A link runs no faster than the slower end, so the upstream bridge caps
++     * the target as well. Asking a Gen2 slot for Gen3 only burns a retrain
++     * cycle and can leave the link unstable.
++     */
++    upstream_cap = 0U;
++    ret = pcie_capability_read_dword(upstream, PCI_EXP_LNKCAP, &upstream_cap);
++    if (ret == 0)
++    {
++        upstream_cap &= PCI_EXP_LNKCAP_SLS;
++        if ((upstream_cap != 0U) && (target > upstream_cap))
++            target = upstream_cap;
++    }
++
++    if ((NVreg_CmpPcieGen <= 3U) && (target > NVreg_CmpPcieGen))
++        target = NVreg_CmpPcieGen;
++
 +    NV_DEV_PRINTF(NV_DBG_ERRORS, nv,
-+                  "CMP PCIe: DISABLE_GEN3_SPEED fuse %s, LINK_CAP max Gen%u, targeting Gen%u\n",
-+                  gen3_fused ? "clear" : "SET (Gen2 is the ceiling)",
-+                  link_cap, target);
++                  "CMP PCIe: DISABLE_GEN3_SPEED fuse %s, GPU LINK_CAP Gen%u, "
++                  "upstream LNKCAP Gen%u, targeting Gen%u\n",
++                  gen3_allowed ? "clear" : "SET (Gen2 is the ceiling)",
++                  link_cap, upstream_cap, target);
 +
 +    for (; target >= 1U; target--)
 +    {
++        /* XVE LINK_CONFIG_0 MAX_LINK_RATE is inverted: 1 = 8G, 2 = 5G, 3 = 2.5G. */
 +        rate = (target >= 3U) ? 1U : ((target == 2U) ? 2U : 3U);
 +        link_config = readl(bar0 + 0x8c040);
 +        writel((link_config & ~0x000c0000U) | (rate << 18), bar0 + 0x8c040);
@@ -97,7 +154,12 @@
 +        {
 +            msleep(100);
 +            ret = pcie_capability_read_word(gpu, PCI_EXP_LNKSTA, &link_status);
-+            if (ret)
++            /*
++             * Config reads return all ones once the device falls off the bus.
++             * Left alone that decodes as a link trained to Gen15, which would
++             * report success for a card that just disappeared.
++             */
++            if (ret || (link_status == (u16)~0))
 +                continue;
 +            reached = link_status & PCI_EXP_LNKSTA_CLS;
 +            if (reached >= target)
@@ -129,11 +191,11 @@
  /*
   * Brings up the device on the first file open. Assumes nvl->ldata_lock is held.
   */
-@@ -1526,6 +1641,8 @@
+@@ -1526,6 +1703,8 @@
          nv->flags |= NV_FLAG_PERSISTENT_SW_STATE;
      }
  
-+    nv_cmp170hx_retrain_gen2(nv);
++    nv_cmp170hx_retrain_pcie(nv);
 +
      /* Generate and cache the UUID for future callers */
      (void)rm_get_gpu_uuid_raw(sp, nv);
