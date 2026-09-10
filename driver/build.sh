@@ -56,7 +56,6 @@ PATCH_ORDER=(
     pcie-gen2-probe-retrain.patch
     name-string.patch
     bar1-resize-unlock.patch
-    floorsweep-guard.patch
     cmp-sku-mask.patch
 )
 PATCH_FILES=()
