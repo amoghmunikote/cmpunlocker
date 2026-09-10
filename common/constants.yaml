@@ -67,11 +67,6 @@ unlocks:
       wpr2_lo:   { addr: "0x001fa824" }
       wpr2_hi:   { addr: "0x001fa828" }
 
-  floorsweep_guard:
-    patch: floorsweep-guard.patch
-    registers:
-      opt_fbpa_disable: { addr: "0x00820368", value: "0x003FC000" }
-
   pcie_gen2:
     patch: pcie-gen2.patch
     registers:
