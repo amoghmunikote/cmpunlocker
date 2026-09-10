@@ -75,6 +75,10 @@ sudo ./uninstall.sh --yes
 
 Then perform a cold reboot (full power off, then boot).
 
+## Contributions
+
+Please read [docs/CONTRIBUTING.md](https://github.com/amoghmunikote/cmpunlocker/blob/master/docs/CONTRIBUTING.md) before opening a PR.
+
 ## Support & Community
 
 Having issues? Need help? Join our [Discord community](https://discord.gg/CdHSakKSFv) to discuss with other users and get support.
