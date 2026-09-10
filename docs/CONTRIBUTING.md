@@ -18,8 +18,9 @@ Thanks for your interest in contributing to cmpunlocker! This guide covers submi
 
 ## Pull Requests I will reject:
 
-- PRs that don't follow this template: I already said it above! 
+- PRs that don't follow this template: I already said it above!
 - AI slop: I don't want your straight AI slop that you cooked up in 2 minutes using Claude Code. It's going to be shitty and full of bloat. If you are inclined to do this, please review the code you are going to submit.
+- Documentation: That's for me to manage, not you.
 - Support for other cards: Maintaining cmpunlocker for a single card is already a lot of work for me. If you've already put the work into making a PR, I bet you can fork cmpunlocker and modify it to support your card.
 
 ## Code Style & Conventions
