@@ -1,21 +1,22 @@
 <div align="center" style="text-align: center;">
-  
-<img width="1280" height="300" alt="banner" src="https://github.com/user-attachments/assets/6edceb8e-afcb-43a4-b5b2-4321d81284d1" />
-
-
-<p>
-  <b>Unlock tool for the NVIDIA CMP 170HX (GA100) mining card.</b>
-  <br>
-  Restores full SM compute throughput and unlocked HBM2e memory geometry that are restricted in firmware/OTP configuration.
-</p>
-
-<h3>
-  <a href="https://discord.gg/CdHSakKSFv">Discord</a>
-</h3>
-
+  <img width="1280" height="300" alt="cmpunlocker banner" src="https://github.com/user-attachments/assets/6edceb8e-afcb-43a4-b5b2-4321d81284d1" />
 </div>
 
-**[Join our Discord community](https://discord.gg/CdHSakKSFv)** for support and discussions.
+---
+
+## What is cmpunlocker?
+
+<p>
+  cmpunlocker restores numerous features that are restricted in firmware/OTP configuration of the NVIDIA CMP 170HX. cmpunlocker has been featured by multiple outlets like wccftech, Tom's Hardware and LinusTechTips.
+</p>
+
+<table>
+  <tr>
+    <td><a href="https://youtu.be/NmBfgOanCyk" title=""><img src="https://github.com/user-attachments/assets/be0a9cab-19b6-47c4-91cd-cb6a98be406f"></a></td>
+    <td><a href="https://www.tomshardware.com/pc-components/gpus/nvidia-crypto-mining-gpus-hacked-to-restore-locked-away-vram-in-order-to-feed-ai-boom-software-mod-unlocks-64gb-of-vram-on-usd250-cmp-170hx" title="Article by Tom's Hardware"><img src="https://github.com/user-attachments/assets/475b5acf-999b-430c-8ede-1c39e9fd6b97"></a></td>
+    <td><a href="https://wccftech.com/nvidia-cmp-170hx-8-10-gb-prices-explode-over-1000-usd-as-tool-unlocks-hidden-64-80gb-vram/" title="Article by wccftech"><img src="https://github.com/user-attachments/assets/e801b2b3-3002-4346-a9ad-6b228ef62b6a"></a></td>
+  </tr>
+</table>
 
 ---
 
