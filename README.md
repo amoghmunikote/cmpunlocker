@@ -1,22 +1,44 @@
-# cmpunlocker
+<div align="center" style="text-align: center;">
 
-Unlock tool for the NVIDIA CMP 170HX (GA100) mining card. Restores full SM compute throughput and unlocked HBM2e memory geometry that are restricted in firmware/OTP configuration.
+<h1>cmpunlocker</h1>
 
+<p>
+  <b>Unlock tool for the NVIDIA CMP 170HX (GA100) mining card.</b>
+  <br>
+  Restores full SM compute throughput and unlocked HBM2e memory geometry that are restricted in firmware/OTP configuration.
+</p>
+
+<h3>
+  <a href="https://discord.gg/CdHSakKSFv">Discord</a>
+</h3>
+
+</div>
 
 **[Join our Discord community](https://discord.gg/CdHSakKSFv)** for support and discussions.
 
 ---
+
 ## Proof of Concept
 
 Below are memory and performance results after applying the unlock:
 
-### Memory Unlock Results
+<table>
+  <tr>
+    <td><b>Memory Unlock Results</b></td>
+  </tr>
+  <tr>
+    <td><img alt="memory unlock" src="https://github.com/user-attachments/assets/ae062bd8-e3a7-4e73-b9a4-fbcde53f3c7b" width="100%" style="max-width: 900px;" /></td>
+  </tr>
+</table>
 
-<img alt="memory unlock" src="https://github.com/user-attachments/assets/ae062bd8-e3a7-4e73-b9a4-fbcde53f3c7b" width="100%" style="max-width: 900px;" />
-
-### Performance Benchmarks ([OpenCL-Benchmark](https://github.com/ProjectPhysX/OpenCL-Benchmark))
-
-<img alt="performance benchmarks" src="https://github.com/user-attachments/assets/2501506d-420f-4014-9574-b1bd0290eb60" width="100%" style="max-width: 900px;" />
+<table>
+  <tr>
+    <td><b>Performance Benchmarks (<a href="https://github.com/ProjectPhysX/OpenCL-Benchmark">OpenCL-Benchmark</a>)</b></td>
+  </tr>
+  <tr>
+    <td><img alt="performance benchmarks" src="https://github.com/user-attachments/assets/2501506d-420f-4014-9574-b1bd0290eb60" width="100%" style="max-width: 900px;" /></td>
+  </tr>
+</table>
 
 ---
 
@@ -52,16 +74,44 @@ Then perform a cold reboot (full power off, then boot).
 
 ## What Gets Unlocked
 
-| Feature | Status |
-|---|---|
-| Full SM compute throughput (SS0/SS1) | Working ✓ |
-| Memory geometry (64GB on 8GB cards, 40GB on 10GB cards) | Working ✓ |
-| PCIe Gen 2 speeds | Working ✓ |
-| Full BAR1 Size (64GB) | Working ✓ |
-| JTAG (Host2Jtag register access) | Working ✓ |
-| VFIO-based passthrough | Working ✓ |
-| GPU profiling | Working ✓ |
-| Persistence across reboot (patched modules) | Working ✓ |
+<table>
+  <tr>
+    <th>Feature</th>
+    <th>Status</th>
+  </tr>
+  <tr>
+    <td>Full SM compute throughput (SS0/SS1)</td>
+    <td>Working ✓</td>
+  </tr>
+  <tr>
+    <td>Memory geometry (64GB on 8GB cards, 40GB on 10GB cards)</td>
+    <td>Working ✓</td>
+  </tr>
+  <tr>
+    <td>PCIe Gen 2 speeds</td>
+    <td>Working ✓</td>
+  </tr>
+  <tr>
+    <td>Full BAR1 Size (64GB)</td>
+    <td>Working ✓</td>
+  </tr>
+  <tr>
+    <td>JTAG (Host2Jtag register access)</td>
+    <td>Working ✓</td>
+  </tr>
+  <tr>
+    <td>VFIO-based passthrough</td>
+    <td>Working ✓</td>
+  </tr>
+  <tr>
+    <td>GPU profiling</td>
+    <td>Working ✓</td>
+  </tr>
+  <tr>
+    <td>Persistence across reboot (patched modules)</td>
+    <td>Working ✓</td>
+  </tr>
+</table>
 
 ---
 
