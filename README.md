@@ -1,6 +1,7 @@
 <div align="center" style="text-align: center;">
+  
+<img width="1280" height="300" alt="banner" src="https://github.com/user-attachments/assets/6edceb8e-afcb-43a4-b5b2-4321d81284d1" />
 
-<h1>cmpunlocker</h1>
 
 <p>
   <b>Unlock tool for the NVIDIA CMP 170HX (GA100) mining card.</b>
