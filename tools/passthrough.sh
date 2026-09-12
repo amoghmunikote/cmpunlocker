@@ -33,7 +33,7 @@ Addresses are full PCI addresses, e.g. 0000:04:00.0.
 EOF
 }
 
-nvidia_loaded() { lsmod | grep -q '^nvidia '; }
+nvidia_loaded() { grep -q '^nvidia ' /proc/modules; }
 
 require_installed() {
     [[ -x "${ARM}" && -x "${GSP}" ]] \
@@ -72,7 +72,7 @@ do_status() {
             "[$(cat "/sys/bus/pci/devices/${bdf}/reset_method" 2>/dev/null || echo '?')]" \
             "$(unlocked_mib "${bdf}")"
     done
-    if lsmod | grep -q "^${MOD_NAME}"; then
+    if grep -q "^${MOD_NAME} " /proc/modules; then
         ok "${MOD_NAME} loaded (bus reset blocked)"
     else
         info "${MOD_NAME} not loaded"
