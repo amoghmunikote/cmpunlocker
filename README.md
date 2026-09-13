@@ -72,7 +72,7 @@ sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
 sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 ```
 
-Then perform a cold reboot (full power off, then boot).
+Then perform a reboot.
 
 ## What Gets Unlocked
 
@@ -125,7 +125,7 @@ To uninstall cmpunlocker, run the following command:
 sudo ./remove.sh --yes
 ```
 
-Then perform a cold reboot (full power off, then boot).
+Then perform a reboot.
 
 ## Contributions
 
