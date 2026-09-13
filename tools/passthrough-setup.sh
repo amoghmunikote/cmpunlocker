@@ -20,6 +20,8 @@ if ! make -C "${MOD_SRC}" KVER="${KVER}" &>/dev/null; then
     exit 0
 fi
 install -D -m 0644 "${MOD_SRC}/cmp_no_bus_reset.ko" "${MOD_DST}/cmp_no_bus_reset.ko"
+CMPUNLOCKER_KVER="${KVER}" "${SCRIPT_DIR}/sign-modules.sh" sign "${MOD_DST}/cmp_no_bus_reset.ko" \
+    || warn "cmp_no_bus_reset.ko is unsigned; it will not load while Secure Boot is on"
 depmod -a "${KVER}"
 ok "Installed cmp_no_bus_reset.ko"
 

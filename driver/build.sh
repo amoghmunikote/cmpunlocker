@@ -214,6 +214,9 @@ for ko in "${KO_FILES[@]}"; do
     ok "Installed ${base}"
 done
 
+CMPUNLOCKER_KVER="${KVER}" "${SCRIPT_DIR}/../tools/sign-modules.sh" sign "${INSTALL_MOD_DIR}"/nvidia*.ko \
+    || die "Could not sign the patched modules for Secure Boot"
+
 depmod -a "${KVER}"
 ok "depmod complete"
 rebuild_initramfs() {

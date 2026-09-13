@@ -136,6 +136,18 @@ restore_stock_modules() {
     return 0
 }
 
+sign_stock_modules() {
+    local kernel="$1" mod ko kos=()
+    for mod in nvidia nvidia-modeset nvidia-uvm nvidia-drm nvidia-peermem; do
+        ko="$(modinfo -n -k "${kernel}" "${mod}" 2>/dev/null || true)"
+        [[ "${ko}" == *.ko ]] && kos+=("${ko}")
+    done
+    [[ ${#kos[@]} -gt 0 ]] || return 0
+    chmod +x "${SCRIPT_DIR}/tools/sign-modules.sh"
+    CMPUNLOCKER_KVER="${kernel}" "${SCRIPT_DIR}/tools/sign-modules.sh" sign "${kos[@]}" \
+        || warn "Stock NVIDIA modules for kernel ${kernel} are unsigned; they will not load while Secure Boot is on"
+}
+
 mod_removed=0
 kernels=("$(uname -r)")
 shopt -s nullglob
@@ -153,6 +165,7 @@ done
 for kernel in "${kernels[@]}"; do
     depmod -a "${kernel}" 2>/dev/null || true
     restore_stock_modules "${kernel}"
+    sign_stock_modules "${kernel}"
 done
 
 info "Rebuilding initramfs so stock modules are packed again..."

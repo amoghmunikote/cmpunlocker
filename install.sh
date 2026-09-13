@@ -173,11 +173,9 @@ export CMPUNLOCKER_GPU_INVENTORY="$(printf '%s\n' "${GPU_INVENTORY_LINES[@]}")"
 
 step "Verifying nvidia-open (${SUPPORTED_VERSIONS_CSV})"
 [[ ${#SUPPORTED_VERSIONS[@]} -gt 0 ]] || die "No supported versions listed in driver/VERSION"
-if [[ -d /sys/firmware/efi ]] && command -v mokutil &>/dev/null; then
-    if mokutil --sb-state 2>/dev/null | grep -qi 'SecureBoot enabled'; then
-        die "Secure Boot is enabled. Disable it before installing unsigned patched modules."
-    fi
-fi
+chmod +x "${SCRIPT_DIR}/tools/sign-modules.sh"
+CMPUNLOCKER_KVER="$(uname -r)" "${SCRIPT_DIR}/tools/sign-modules.sh" prepare \
+    || die "Secure Boot is enabled but the patched modules cannot be signed on this system"
 
 version_supported() {
     local v="$1"
