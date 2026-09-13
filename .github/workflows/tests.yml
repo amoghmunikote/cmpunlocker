@@ -1,0 +1,22 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: driver/.build/*.tar.gz
+          key: open-gpu-kernel-modules-${{ hashFiles('driver/VERSION') }}
+          restore-keys: open-gpu-kernel-modules-
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck patch python3-pytest
+          sudo apt-get install -y "linux-headers-$(uname -r)" || sudo apt-get install -y linux-headers-generic
+      - run: python3 -m pytest -v

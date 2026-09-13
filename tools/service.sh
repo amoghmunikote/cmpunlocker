@@ -46,7 +46,8 @@ link_generation() {
 }
 
 install_service() {
-    local module="/lib/modules/$(uname -r)/updates/cmpunlocker/nvidia.ko"
+    local module
+    module="/lib/modules/$(uname -r)/updates/cmpunlocker/nvidia.ko"
     local -a gpus=()
 
     require_root
