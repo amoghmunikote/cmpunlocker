@@ -7,12 +7,14 @@ Thanks for your interest in contributing to cmpunlocker! This guide covers submi
 ## Submitting Changes
 
 1. **Open a PR** and use the required [format](https://github.com/amoghmunikote/cmpunlocker/blob/master/.github/pull_request_template.md). **If you don't use it, I will reject it.** No exceptions.
+
+2. **Make sure unit tests pass.** This ensures that whatever gets merged into cmpunlocker actually works.
    
-2. **Be patient.** Currently, I'm the only person maintaining cmpunlocker so won't be able to get to you right away.
+3. **Be patient.** Currently, I'm the only person maintaining cmpunlocker so won't be able to get to you right away.
 
-3. **Be ready to change your code.** Chances are I will scrutinize your code heavily if I need to, so be prepared.
+4. **Be ready to make changes to your code.** Chances are I will scrutinize your code heavily if I need to, so be prepared.
 
-4. **Merge!** When all is approved, you can merge your changes. 
+5. **Merge!** When all is approved, you can merge your changes. 
 
 ---
 
