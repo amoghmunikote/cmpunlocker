@@ -251,14 +251,14 @@ info "Attempting to unload NVIDIA modules..."
 systemctl stop nvidia-persistenced 2>/dev/null || true
 systemctl stop nvidia-fabricmanager 2>/dev/null || true
 reload_ok=0
-if lsmod | grep -q '^nvidia'; then
+if grep -q '^nvidia' /proc/modules; then
     for mod in nvidia_drm nvidia_uvm nvidia_modeset nvidia; do
         modprobe -r "${mod}" 2>/dev/null || true
     done
     sleep 1
 fi
 
-if ! lsmod | grep -q '^nvidia '; then
+if ! grep -q '^nvidia ' /proc/modules; then
     if modprobe nvidia && modprobe nvidia-modeset; then
         modprobe nvidia-uvm 2>/dev/null || true
         modprobe nvidia-drm 2>/dev/null || true

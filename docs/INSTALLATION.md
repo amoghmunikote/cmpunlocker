@@ -37,7 +37,7 @@ Then perform a cold reboot (full power off, then boot).
 To uninstall cmpunlocker, run the following command:
 
 ```bash
-sudo ./uninstall.sh --yes
+sudo ./remove.sh --yes
 ```
 
 Then perform a cold reboot (full power off, then boot).
