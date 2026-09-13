@@ -11,8 +11,7 @@
  
  #include <sound/core.h>             /* HDA struct snd_card */
  
-@@ -1360,6 +1364,87 @@
- #if defined(NV_UVM_ENABLE)
+@@ -1361,4 +1365,85 @@
      nv_uvm_resume_P2P(pUuid);
  #endif
 +}
@@ -98,7 +97,6 @@
 +                  "CMP Gen2: PCIe capability access failed (%d); skipping link retrain\n", ret);
  }
  
- /*
 @@ -1530,6 +1624,8 @@
          nv->flags |= NV_FLAG_PERSISTENT_SW_STATE;
      }

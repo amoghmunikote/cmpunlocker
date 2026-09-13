@@ -1,27 +1,30 @@
 diff -Naur a/src/nvidia/generated/g_kernel_gsp_nvoc.h b/src/nvidia/generated/g_kernel_gsp_nvoc.h
---- a/src/nvidia/generated/g_kernel_gsp_nvoc.h	2026-07-18 11:26:26.833302560 -0700
-+++ b/src/nvidia/generated/g_kernel_gsp_nvoc.h	2026-07-18 11:26:26.834341525 -0700
-@@ -544,6 +544,8 @@
-     RM_RISCV_UCODE_DESC *pGspRmBootUcodeDesc;
+--- a/src/nvidia/generated/g_kernel_gsp_nvoc.h
++++ b/src/nvidia/generated/g_kernel_gsp_nvoc.h
+@@ -545,2 +545,4 @@
      MEMORY_DESCRIPTOR *pGspUCodeRadix3Descriptor;
-     MEMORY_DESCRIPTOR *pSignatureMemdesc;
 +    NvU8 *pStockSignatureData;
 +    NvU64 stockSignatureSize;
-     GspSystemInfo *pSystemInfo;
-     NvU32 regTableSize;
-     PACKED_REGISTRY_TABLE *pRegTable;
+     MEMORY_DESCRIPTOR *pSignatureMemdesc;
 diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
---- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c	2026-07-18 11:26:26.827164897 -0700
-+++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c	2026-07-18 11:26:26.828254361 -0700
-@@ -102,6 +102,23 @@
- 
- #include "crashcat/crashcat_report.h"
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -101,4 +101,30 @@
+ #endif
  
 +#define SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID   0x20C2
 +#define SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID 0x2082
 +#define SEC2_POSTBL_TIMING_SIGNATURE_SIZE          0x0000f800ULL
 +#define SEC2_POSTBL_TIMING_FILL_DWORD              0x000004a7U
 +#define SEC2_POSTBL_TIMING_DMEM_PATH               "/lib/firmware/nvidia/ga100/gsp/dmem.bin"
++
++#ifdef GSP_FW_WPR_META_V1_H_
++#define SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)      ((pKernelGsp)->pWprMetaV1)
++#define SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp) ((pKernelGsp)->pWprMetaV1Descriptor)
++#else
++#define SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)      ((pKernelGsp)->pWprMeta)
++#define SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp) ((pKernelGsp)->pWprMetaDescriptor)
++#endif
 +
 +NV_STATUS kgspSec2PostblTimingRefillPayload(OBJGPU *pGpu, KernelGsp *pKernelGsp,
 +                                           NvU32 writeAddr, NvU32 writeValue);
@@ -34,37 +37,36 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +    return (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
 +            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID);
 +}
++
+ #include "crashcat/crashcat_report.h"
  
- struct MIG_CI_UPDATE_CALLBACK_PARAMS
- {
-@@ -4805,14 +4824,23 @@
-     if (kgspIsWpr2Up_HAL(pGpu, pKernelGsp) &&
+@@ -4802,7 +4828,7 @@
+     *pbRetry = NV_FALSE;
+ 
+     // Fail early if WPR2 is up
+-    if (kgspIsWpr2Up_HAL(pGpu, pKernelGsp) &&
++    if (!_kgspSec2PostblTimingEnabled(pGpu) && kgspIsWpr2Up_HAL(pGpu, pKernelGsp) &&
          (!pGpu->getProperty(pGpu, PDB_PROP_GPU_PREINITIALIZED_WPR_REGION)))
      {
--        NV_PRINTF(LEVEL_ERROR, "unexpected WPR2 already up, cannot proceed with booting GSP\n");
--        NV_PRINTF(LEVEL_ERROR, "(the GPU is likely in a bad state and may need to be reset)\n");
--        return NV_ERR_INVALID_STATE;
-+        NV_PRINTF(LEVEL_WARNING,
-+                  "WPR2 already up before GSP boot; continuing for recovery\n");
-     }
+         NV_PRINTF(LEVEL_ERROR, "unexpected WPR2 already up, cannot proceed with booting GSP\n");
+@@ -4812,6 +4838,16 @@
  
      // Populate WPR meta structure (requires knowing FB size on dGPU, which depends on GFW_BOOT)
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPopulateWprMeta_HAL(pGpu, pKernelGsp, pGspFw));
- 
++
 +    if (_kgspSec2PostblTimingEnabled(pGpu))
 +    {
 +        NV_PRINTF(LEVEL_ERROR,
 +                  "SEC2_DEBUG: WPR meta fbSize=0x%016llx wprEnd=0x%016llx "
 +                  "heapSize=0x%016llx\n",
-+                  pKernelGsp->pWprMeta->fbSize,
-+                  pKernelGsp->pWprMeta->gspFwWprEnd,
-+                  pKernelGsp->pWprMeta->gspFwHeapSize);
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->fbSize,
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwWprEnd,
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwHeapSize);
 +    }
-+
+ 
      {
          // If the new FB layout requires a scrubber ucode to scrub additional space, prepare it now
-         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, _kgspPrepareScrubberImageIfNeeded(pGpu, pKernelGsp));
-@@ -4821,6 +4849,124 @@
+@@ -4821,6 +4857,124 @@
      // Setup arguments for bootstrapping GSP
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPrepareForBootstrap_HAL(pGpu, pKernelGsp, KGSP_BOOT_MODE_NORMAL));
  
@@ -108,7 +110,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +                    continue;
 +
 +                plmStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
-+                    memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++                    memdescGetPhysAddr(SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp), AT_GPU, 0));
 +
 +                NvU32 regVal = GPU_REG_RD32(pGpu, plmTable[plmIdx].addr);
 +                NV_PRINTF(LEVEL_ERROR,
@@ -179,71 +181,17 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +        NV_PRINTF(LEVEL_ERROR,
 +                  "SEC2_DEBUG: WPR meta updated fbSize=0x%016llx wprStart=0x%016llx "
 +                  "wprEnd=0x%016llx heapOffset=0x%016llx heapSize=0x%016llx\n",
-+                  pKernelGsp->pWprMeta->fbSize,
-+                  pKernelGsp->pWprMeta->gspFwWprStart,
-+                  pKernelGsp->pWprMeta->gspFwWprEnd,
-+                  pKernelGsp->pWprMeta->gspFwHeapOffset,
-+                  pKernelGsp->pWprMeta->gspFwHeapSize);
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->fbSize,
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwWprStart,
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwWprEnd,
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwHeapOffset,
++                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwHeapSize);
 +    }
 +
      // Release the API lock if relaxed locking for parallel init is enabled
      NvBool bRelaxedLocking = _kgspShouldRelaxGspInitLocking(pGpu);
      if (bRelaxedLocking)
-@@ -5164,6 +5289,53 @@
-         goto done;
-     }
- 
-+    {
-+        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
-+        if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
-+            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID)
-+        {
-+            GspStaticConfigInfo *pGSCI = &pKernelGsp->gspStaticInfo;
-+            NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_PARAMS *pFbRegionInfoParams =
-+                &pGSCI->fbRegionInfoParams;
-+            NvU64 targetFbBytes = (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
-+                                    ? 0x0000001000000000ULL
-+                                    : 0x0000000A00000000ULL;
-+            NvU64 stockFbBytes  = 0x0000000200000000ULL;
-+            NvU32 numRegions = pFbRegionInfoParams->numFBRegions;
-+
-+            NV_PRINTF(LEVEL_ERROR,
-+                      "SEC2_DEBUG: static-info BEFORE: fb_length=0x%llx numRegions=%u\n",
-+                      pGSCI->fb_length, numRegions);
-+
-+            pGSCI->fb_length = targetFbBytes;
-+
-+            if (numRegions > 0 &&
-+                numRegions <= NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_MAX_ENTRIES)
-+            {
-+                NV2080_CTRL_CMD_FB_GET_FB_REGION_FB_REGION_INFO *pLastRegion =
-+                    &pFbRegionInfoParams->fbRegion[numRegions - 1];
-+                NvU64 highLimit = targetFbBytes - 1;
-+
-+                NV_PRINTF(LEVEL_ERROR,
-+                          "SEC2_DEBUG: last region[%u] base=0x%llx limit=0x%llx reserved=0x%llx\n",
-+                          numRegions - 1, pLastRegion->base, pLastRegion->limit, pLastRegion->reserved);
-+
-+                if (pLastRegion->limit < highLimit)
-+                {
-+                    pLastRegion->limit = highLimit;
-+                    pLastRegion->reserved = pLastRegion->limit - pLastRegion->base + 1;
-+                    pLastRegion->supportCompressed = NV_TRUE;
-+                    pLastRegion->supportISO = NV_TRUE;
-+                    pLastRegion->performance = 20;
-+                }
-+
-+                NV_PRINTF(LEVEL_ERROR,
-+                          "SEC2_DEBUG: static-info AFTER: fb_length=0x%llx last_limit=0x%llx\n",
-+                          pGSCI->fb_length, pLastRegion->limit);
-+            }
-+        }
-+    }
-+
-     NV_ASSERT_OK_OR_GOTO(status, kgspInitGspTraceCrashBuffer(pGpu, pKernelGsp), done);
- 
-     // Set PDB properties as per data from GSP.
-@@ -5662,6 +5831,84 @@
+@@ -5662,6 +5816,84 @@
      pKernelGsp->gspRmBootUcodeSize   = 0;
  }
  
@@ -311,16 +259,16 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +    memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
 +    memdescFlushCpuCaches(pGpu, pKernelGsp->pSignatureMemdesc);
 +
-+    if (pKernelGsp->pWprMeta != NULL)
++    if (SEC2_POSTBL_TIMING_WPR_META(pKernelGsp) != NULL)
 +    {
-+        pKernelGsp->pWprMeta->sysmemAddrOfSignature =
++        SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->sysmemAddrOfSignature =
 +            memdescGetPhysAddr(pKernelGsp->pSignatureMemdesc, AT_GPU, 0);
-+        pKernelGsp->pWprMeta->sizeOfSignature =
++        SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->sizeOfSignature =
 +            memdescGetSize(pKernelGsp->pSignatureMemdesc);
 +    }
 +
-+    if (pKernelGsp->pWprMetaDescriptor != NULL)
-+        memdescFlushCpuCaches(pGpu, pKernelGsp->pWprMetaDescriptor);
++    if (SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp) != NULL)
++        memdescFlushCpuCaches(pGpu, SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp));
 +
 +    return NV_OK;
 +}
@@ -328,7 +276,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  static NV_STATUS
  _kgspCreateSignatureMemdesc
  (
-@@ -5672,6 +5919,9 @@
+@@ -5672,6 +5904,9 @@
  {
      NV_STATUS status = NV_OK;
      NvU8 *pSignatureVa = NULL;
@@ -338,7 +286,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
      NvU64 flags = MEMDESC_FLAGS_NONE;
  
      if (confComputeForceUnprotAlloc(pGpu))
-@@ -5682,7 +5932,7 @@
+@@ -5682,7 +5917,7 @@
      // NOTE: align to 256 because that's the alignment needed for Booter DMA
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
          memdescCreate(&pKernelGsp->pSignatureMemdesc, pGpu,
@@ -347,7 +295,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
              NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags));
  
      memdescTagAlloc(status,
-@@ -5694,8 +5944,48 @@
+@@ -5694,8 +5929,48 @@
          (pSignatureVa != NULL) ? NV_OK : NV_ERR_INSUFFICIENT_RESOURCES,
          fail_alloc);
  
@@ -398,7 +346,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  
      memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
      pSignatureVa = NULL;
-@@ -5709,6 +5999,69 @@
+@@ -5709,6 +5984,69 @@
      memdescDestroy(pKernelGsp->pSignatureMemdesc);
      pKernelGsp->pSignatureMemdesc = NULL;
  
@@ -445,16 +393,16 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +
 +    memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
 +
-+    if (pKernelGsp->pWprMeta != NULL)
++    if (SEC2_POSTBL_TIMING_WPR_META(pKernelGsp) != NULL)
 +    {
-+        pKernelGsp->pWprMeta->sysmemAddrOfSignature =
++        SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->sysmemAddrOfSignature =
 +            memdescGetPhysAddr(pKernelGsp->pSignatureMemdesc, AT_GPU, 0);
-+        pKernelGsp->pWprMeta->sizeOfSignature =
++        SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->sizeOfSignature =
 +            memdescGetSize(pKernelGsp->pSignatureMemdesc);
 +    }
 +
-+    if (pKernelGsp->pWprMetaDescriptor != NULL)
-+        memdescFlushCpuCaches(pGpu, pKernelGsp->pWprMetaDescriptor);
++    if (SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp) != NULL)
++        memdescFlushCpuCaches(pGpu, SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp));
 +
 +    return NV_OK;
 +
@@ -468,3 +416,55 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
      return status;
  }
  
+@@ -6612,6 +6950,51 @@
+ {
+     GspStaticConfigInfo *pGSCI = GPU_GET_GSP_STATIC_INFO(pGpu);
+ 
++    {
++        NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++        if (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
++            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID)
++        {
++            NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_PARAMS *pFbRegionInfoParams =
++                &pGSCI->fbRegionInfoParams;
++            NvU64 targetFbBytes = (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID)
++                                    ? 0x0000001000000000ULL
++                                    : 0x0000000A00000000ULL;
++            NvU32 numRegions = pFbRegionInfoParams->numFBRegions;
++
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: static-info BEFORE: fb_length=0x%llx numRegions=%u\n",
++                      pGSCI->fb_length, numRegions);
++
++            pGSCI->fb_length = targetFbBytes;
++
++            if (numRegions > 0 &&
++                numRegions <= NV2080_CTRL_CMD_FB_GET_FB_REGION_INFO_MAX_ENTRIES)
++            {
++                NV2080_CTRL_CMD_FB_GET_FB_REGION_FB_REGION_INFO *pLastRegion =
++                    &pFbRegionInfoParams->fbRegion[numRegions - 1];
++                NvU64 highLimit = targetFbBytes - 1;
++
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: last region[%u] base=0x%llx limit=0x%llx reserved=0x%llx\n",
++                          numRegions - 1, pLastRegion->base, pLastRegion->limit, pLastRegion->reserved);
++
++                if (pLastRegion->limit < highLimit)
++                {
++                    pLastRegion->limit = highLimit;
++                    pLastRegion->reserved = pLastRegion->limit - pLastRegion->base + 1;
++                    pLastRegion->supportCompressed = NV_TRUE;
++                    pLastRegion->supportISO = NV_TRUE;
++                    pLastRegion->performance = 20;
++                }
++
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: static-info AFTER: fb_length=0x%llx last_limit=0x%llx\n",
++                          pGSCI->fb_length, pLastRegion->limit);
++            }
++        }
++    }
++
+     pGpu->setProperty(pGpu, PDB_PROP_GPU_IS_MOBILE, pGSCI->bIsMobile);
+     pGpu->setProperty(pGpu, PDB_PROP_GPU_RTD3_GC6_SUPPORTED, pGSCI->bIsGc6Rtd3Allowed);
+     pGpu->setProperty(pGpu, PDB_PROP_GPU_RTD3_GC8_SUPPORTED, pGSCI->bIsGc8Rtd3Allowed);

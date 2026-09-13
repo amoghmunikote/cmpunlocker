@@ -98,7 +98,7 @@
 +                            continue;
 +
 +                        xpStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
-+                            memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++                            memdescGetPhysAddr(SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp), AT_GPU, 0));
 +
 +                        NvU32 tgtRd = GPU_REG_RD32(pGpu, xp3gTable[xi].addr);
 +                        NvU32 ovr0Rd = GPU_REG_RD32(pGpu, PCIE_GEN2_XP3G_OVR_BASE);
@@ -148,7 +148,7 @@
 +                        if (xpStatus != NV_OK)
 +                            continue;
 +                        xpStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
-+                            memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++                            memdescGetPhysAddr(SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp), AT_GPU, 0));
 +                        NvU32 rd = GPU_REG_RD32(pGpu, PCIE_GEN2_VSEC_DEVICE_ADDR);
 +                        NV_PRINTF(LEVEL_ERROR,
 +                                  "SEC2_DEBUG: PCIe VSEC_DEVICE booter attempt=%u "
@@ -179,7 +179,7 @@
 +                        if (xpStatus != NV_OK)
 +                            continue;
 +                        xpStatus = kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
-+                            memdescGetPhysAddr(pKernelGsp->pWprMetaDescriptor, AT_GPU, 0));
++                            memdescGetPhysAddr(SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp), AT_GPU, 0));
 +                        NvU32 rd = GPU_REG_RD32(pGpu, PCIE_GEN2_PRIV_MISC_1_ADDR);
 +                        NV_PRINTF(LEVEL_ERROR,
 +                                  "SEC2_DEBUG: PCIe PRIV_MISC_1 booter attempt=%u "

@@ -1,19 +1,15 @@
 diff -Naur a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
 --- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c	2026-07-18 11:26:26.848680684 -0700
 +++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c	2026-07-18 11:26:26.849806595 -0700
-@@ -57,6 +57,12 @@
- #include "g_all_dcl_pb.h"
+@@ -58,2 +58,8 @@
  #include "lib/protobuf/prb.h"
- 
++
 +#define SEC2_DEBUG_PRI_FEATURE_OVERRIDE_PLM         0x00823804
 +#define SEC2_DEBUG_PRI_FEATURE_OVERRIDE_SM_SPEED    0x0082381c
 +#define SEC2_DEBUG_PRI_FEATURE_OVERRIDE_SM_SPEED_1  0x00823820
 +#define SEC2_DEBUG_PRI_FBPA_CFG1                    0x009a0204
 +#define SEC2_DEBUG_PRI_MMU_LMR                      0x00100ce0
-+
- void
- kgspConfigureFalcon_TU102
- (
+ 
 @@ -545,18 +551,35 @@
          // Execute FWSEC to setup FRTS if we have a FRTS region.
          if (kgspGetFrtsSize_HAL(pGpu, pKernelGsp) > 0)
