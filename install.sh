@@ -9,6 +9,7 @@ mkdir -p "${LOG_DIR}"
 LOG_FILE="${LOG_DIR}/install_$(date +%Y%m%d_%H%M%S).log"
 
 PROFILE_OVERRIDE=""
+ENABLE_P2P=0
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
 CONFIGURE_PASSTHROUGH=1
@@ -16,16 +17,20 @@ for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
         --profile=10gb|--profile=10GB) PROFILE_OVERRIDE="10gb" ;;
+        --p2p) ENABLE_P2P=1 ;;
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         --no-passthrough) CONFIGURE_PASSTHROUGH=0 ;;
         -h|--help)
             cat <<'EOF'
 Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
-                        [--no-passthrough]
+                        [--no-passthrough] [--p2p]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
+  --p2p          Enable GPU-to-GPU BAR1 P2P (off by default). Requires a large
+                 BAR1 and a host topology that carries peer traffic; see
+                 docs/P2P.md. Verify real peer transfers.
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
@@ -225,10 +230,18 @@ depmod -a "$(uname -r)"
 ok "DKMS conflicting modules resolution complete"
 
 step "Building and installing patched modules"
+if (( ENABLE_P2P == 1 )); then
+    info "Enabling GPU-to-GPU BAR1 P2P"
+    warn "P2P capability reports alone do not prove transfers work."
+    warn "Check BAR1 on every GPU and run the transfer test in docs/P2P.md."
+else
+    info "P2P overrides disabled (use --p2p to enable)"
+fi
 chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
 CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
 CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
+CMPUNLOCKER_ENABLE_P2P="${ENABLE_P2P}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
@@ -246,11 +259,9 @@ else
     warn "--no-passthrough given; cards are not prepared for VM passthrough"
 fi
 
-info "Configuring PCIe Gen2"
-cat > /etc/modprobe.d/cmp-pcie-gen2.conf <<'EOF'
-options nvidia NVreg_RegistryDwords="RmForceEnableGen2=1;RMPcieLinkSpeed=0x1"
-EOF
-ok "Wrote /etc/modprobe.d/cmp-pcie-gen2.conf"
+info "Configuring PCIe Gen2 retrain service"
+# driver/build.sh writes the combined Gen2/P2P module options before it
+# rebuilds initramfs and reloads NVIDIA. Do not overwrite those options here.
 
 for legacy_unit in cmpretrain.service cmp-gen2-retrain.service; do
     systemctl disable --now "${legacy_unit}" 2>/dev/null || true
@@ -409,6 +420,11 @@ banner
 echo "cmpunlocker install finished!"
 echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
 echo "Passthrough: ${PASSTHROUGH_STATUS}"
+if (( ENABLE_P2P == 1 )); then
+    echo "P2P: enabled (BAR1 path; verify actual transfers using docs/P2P.md)"
+else
+    echo "P2P: disabled"
+fi
 if [[ -n "${IOMMU_PARAMS}" && "${IOMMU_STATUS}" != "skipped" ]]; then
     echo "IOMMU:   ${IOMMU_PARAMS} (${IOMMU_STATUS})"
 else
@@ -433,6 +449,6 @@ if (( CONFIGURE_GEN2_SERVICE == 1 )); then
     echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
 fi
 echo ""
-echo "This script removed the nvidia DKMS kernel modules. You will need to re-run this script after each kernel upgrade"
+echo "This script removed the nvidia DKMS kernel modules. Re-run with the same options (including --p2p, if enabled) after each kernel upgrade."
 echo "Log saved to: ${LOG_FILE}"
 echo ""

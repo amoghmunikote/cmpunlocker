@@ -30,7 +30,20 @@ sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
 sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 ```
 
-Then perform a reboot.
+Then perform a cold reboot (full power off, then boot).
+
+## Optional P2P
+
+```bash
+sudo ./install.sh --p2p
+```
+
+This can be combined with the existing profile, IOMMU, Gen2-service and
+passthrough options. Set up the host's large BAR1 first; see
+[P2P setup and real-transfer verification](P2P.md).
+
+P2P is off by default. Reinstall without `--p2p` to disable it and cold boot.
+Re-run with `--p2p` after a kernel upgrade to retain it.
 
 ## Uninstall
 
@@ -40,4 +53,4 @@ To uninstall cmpunlocker, run the following command:
 sudo ./remove.sh --yes
 ```
 
-Then perform a reboot.
+Then perform a cold reboot (full power off, then boot).

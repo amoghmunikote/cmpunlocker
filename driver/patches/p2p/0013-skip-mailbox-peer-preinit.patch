@@ -1,0 +1,58 @@
+Local fix (not upstream): stop mailbox peer pre-registration from blocking BAR1 P2P.
+
+This is the missing piece in the amoghmunikote P2P branch. That patch repoints the
+BAR1-P2P HALs to _GH100 and sets pcieP2PType=BAR1, but nothing stops
+_kbusInitP2P_GM107 from running at GPU init, where it unconditionally assigns a
+mailbox peer id for every GPU pair:
+
+    pLocalKernelBus->p2pPcie.peerNumberMask[remoteInst] |= NVBIT(locPeerId);
+    pRemoteKernelBus->p2pPcie.peerNumberMask[localInst] |= NVBIT(remPeerId);
+
+kbusIsPcieBar1P2PMappingSupported_GH100 refuses BAR1 P2P if either mask is
+non-zero ("RM only supports one type of PCIE P2P protocol ... at a time"), so the
+pre-registration permanently forces the mailbox path.
+
+Measured on CMP 170HX with 64GB BAR1, RMForceStaticBar1=1 and RMPcieP2PType=1:
+
+  CMPUNLOCK_BAR1P2P: gpu0->gpu1 pcieP2PType=1 loopback=0
+                     staticBar1_0=1 staticBar1_1=1 peerMask0=0x1 peerMask1=0x1
+  CMPUNLOCK_BAR1P2P: REJECT gate4 existing mailbox peer
+
+Gates 1-3 pass; only the pre-registered mask fails. Skipping _kbusInitP2P_GM107
+when pcieP2PType is BAR1 leaves the mask clear so gate 4 passes.
+
+--- a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c	2026-08-07 17:56:21.858119077 -0700
++++ b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c	2026-08-07 17:56:21.882126117 -0700
+@@ -298,11 +298,31 @@
+ 
+         if (gpumgrGetGpuLinkCount(pGpu->gpuInstance) > 0)
+         {
++            KernelBif *pKernelBifP2P = GPU_GET_KERNEL_BIF(pGpu);
++
++            //
++            // cmpunlocker P2P: _kbusInitP2P_GM107 unconditionally pre-registers a
++            // mailbox peer id for every GPU pair, leaving p2pPcie.peerNumberMask
++            // non-zero before any P2P is ever requested. BAR1 P2P refuses to
++            // coexist with a mailbox peer (gate 4 of
++            // kbusIsPcieBar1P2PMappingSupported_GH100), so that pre-registration
++            // permanently blocks BAR1 P2P. When BAR1 P2P is the intended path,
++            // skip it and leave the mask clear.
++            //
+             if (!kbusIsP2pInitialized(pKernelBus) &&
+-                !kbusIsP2pMailboxClientAllocated(pKernelBus))
++                !kbusIsP2pMailboxClientAllocated(pKernelBus) &&
++                ((pKernelBifP2P == NULL) ||
++                 (pKernelBifP2P->pcieP2PType != NV_REG_STR_RM_PCIEP2P_TYPE_BAR1)))
+             {
+                 _kbusInitP2P_GM107(pGpu, pKernelBus);
+             }
++            else if ((pKernelBifP2P != NULL) &&
++                     (pKernelBifP2P->pcieP2PType == NV_REG_STR_RM_PCIEP2P_TYPE_BAR1))
++            {
++                NV_PRINTF(LEVEL_ERROR,
++                          "CMPUNLOCK_BAR1P2P: skipping mailbox peer pre-registration "
++                          "(pcieP2PType=BAR1) so peerNumberMask stays clear\n");
++            }
+         }
+     }
+ 

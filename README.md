@@ -74,7 +74,26 @@ sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
 sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 ```
 
-Then perform a reboot.
+Then perform a cold reboot (full power off, then boot).
+
+### Optional GPU-to-GPU P2P
+
+```bash
+sudo ./install.sh --p2p
+# Can be combined with the existing options:
+sudo ./install.sh --p2p --profile=8gb --no-passthrough
+```
+
+`--p2p` enables the BAR1 P2P implementation from `cmpunlocker-p2p`, including
+capability overrides, peer mappings and page-table rewrites. It is off by
+default. Every peer GPU needs a sufficiently large BAR1 and a host PCIe path
+that carries peer traffic (BIOS must provide enough Above-4G MMIO space).
+See [P2P setup and transfer verification](docs/P2P.md).
+中文说明：[P2P 合并与验证说明](docs/P2P-MERGE.zh-CN.md)。
+
+P2P builds install the modules and module options for the next cold boot.
+Reinstall without `--p2p` to disable the optional driver patches and settings.
+Keep `--p2p` when reinstalling after a kernel upgrade.
 
 ## What Gets Unlocked
 
@@ -112,6 +131,10 @@ Then perform a reboot.
     <td>Working ✓</td>
   </tr>
   <tr>
+    <td>GPU-to-GPU BAR1 P2P</td>
+    <td>Optional: --p2p; requires host setup and real transfer verification</td>
+  </tr>
+  <tr>
     <td>Persistence across reboot (patched modules)</td>
     <td>Working ✓</td>
   </tr>
@@ -127,7 +150,7 @@ To uninstall cmpunlocker, run the following command:
 sudo ./remove.sh --yes
 ```
 
-Then perform a reboot.
+Then perform a cold reboot (full power off, then boot).
 
 ## Contributions
 

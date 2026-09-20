@@ -127,6 +127,14 @@ echo ""
 if [[ -r "${INSTALL_MOD_DIR}/card_profile" ]]; then
     info "Installed profile: $(cat "${INSTALL_MOD_DIR}/card_profile") / geometry: $(cat "${INSTALL_MOD_DIR}/unlock_geometry" 2>/dev/null || echo '?')"
 fi
+if [[ -r "${INSTALL_MOD_DIR}/p2p_enabled" ]] &&
+   [[ "$(cat "${INSTALL_MOD_DIR}/p2p_enabled")" == "1" ]]; then
+    info "Installed modules were built with BAR1 P2P enabled"
+    info "P2P capability matrices (diagnostic only):"
+    nvidia-smi topo -p2p r || warn "Could not query P2P read capabilities"
+    nvidia-smi topo -p2p w || warn "Could not query P2P write capabilities"
+    warn "These matrices do not verify peer transfers; run the test in docs/P2P.md."
+fi
 
 if (( failures > 0 )); then
     echo ""

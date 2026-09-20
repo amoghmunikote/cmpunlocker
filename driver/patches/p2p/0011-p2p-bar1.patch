@@ -1,0 +1,325 @@
+diff --git a/kernel-open/nvidia-uvm/uvm_gpu.h b/kernel-open/nvidia-uvm/uvm_gpu.h
+index dedbfcc..370a69e 100644
+--- a/kernel-open/nvidia-uvm/uvm_gpu.h
++++ b/kernel-open/nvidia-uvm/uvm_gpu.h
+@@ -1825,6 +1825,15 @@ NvU64 uvm_parent_gpu_canonical_address(uvm_parent_gpu_t *parent_gpu, NvU64 addr)
+ 
+ static bool uvm_parent_gpu_is_coherent(const uvm_parent_gpu_t *parent_gpu)
+ {
++    // cmpunlocker P2P: Blackwell+ consumer GPUs use BAR1 P2P via the SYS_COH
++    // aperture rewrite in nvGpuOpsBuildExternalAllocPtes. UVM's P2P
++    // registration path must take the coherent route to match, otherwise
++    // the ZONE_DEVICE peer DMA setup conflicts with BAR1-as-sysmem PTEs.
++    // Inert on CMP 170HX/220HX (Ampere, arch < GB100); kept for forward
++    // compatibility with any future Blackwell-class CMP card.
++    if (parent_gpu->rm_info.gpuArch >= NV2080_CTRL_MC_ARCH_INFO_ARCHITECTURE_GB100)
++        return true;
++
+     return parent_gpu->system_bus.memory_window_end > parent_gpu->system_bus.memory_window_start;
+ }
+ 
+diff --git a/kernel-open/nvidia/nv-reg.h b/kernel-open/nvidia/nv-reg.h
+index 93999d4..fd8359d 100644
+--- a/kernel-open/nvidia/nv-reg.h
++++ b/kernel-open/nvidia/nv-reg.h
+@@ -1051,7 +1051,10 @@ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_NVLINK_DISABLE, 0);
+ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_PCIE_RELAXED_ORDERING_MODE, 0);
+ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_REGISTER_PCI_DRIVER, 1);
+ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_REGISTER_PLATFORM_DEVICE_DRIVER, 1);
+-NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_RESIZABLE_BAR, 0);
++// cmpunlocker P2P: default resizable BAR on so BAR1 P2P mappings can cover
++// full framebuffer size out of the box (compile-time default table entry;
++// cannot be gated by PCI device ID, see docs/P2P.md)
++NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_RESIZABLE_BAR, 1);
+ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_DBG_BREAKPOINT, 0);
+ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_TEGRA_GPU_PG_MASK, 0);
+ NV_DEFINE_REG_ENTRY_GLOBAL(__NV_ENABLE_NONBLOCKING_OPEN, 1);
+diff --git a/src/nvidia/generated/g_kern_bus_nvoc.c b/src/nvidia/generated/g_kern_bus_nvoc.c
+index eae6d6b..69fe272 100644
+--- a/src/nvidia/generated/g_kern_bus_nvoc.c
++++ b/src/nvidia/generated/g_kern_bus_nvoc.c
+@@ -1066,7 +1066,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, GpuHalspecOwner
+     // default
+     else
+     {
+-        pThis->__kbusGetBar1P2PDmaInfo__ = &kbusGetBar1P2PDmaInfo_395e98;
++        pThis->__kbusGetBar1P2PDmaInfo__ = &kbusGetBar1P2PDmaInfo_GH100;
+     }
+ 
+     // kbusIncreaseStaticBar1Refcount -- halified (2 hals) body
+@@ -1114,7 +1114,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, GpuHalspecOwner
+     // default
+     else
+     {
+-        pThis->__kbusCreateP2PMappingForBar1P2P__ = &kbusCreateP2PMappingForBar1P2P_395e98;
++        pThis->__kbusCreateP2PMappingForBar1P2P__ = &kbusCreateP2PMappingForBar1P2P_GH100;
+     }
+ 
+     // kbusRemoveP2PMappingForBar1P2P -- halified (2 hals) body
+@@ -1126,7 +1126,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, GpuHalspecOwner
+     // default
+     else
+     {
+-        pThis->__kbusRemoveP2PMappingForBar1P2P__ = &kbusRemoveP2PMappingForBar1P2P_395e98;
++        pThis->__kbusRemoveP2PMappingForBar1P2P__ = &kbusRemoveP2PMappingForBar1P2P_GH100;
+     }
+ 
+     // kbusHasPcieBar1P2PMapping -- halified (2 hals) body
+@@ -1138,7 +1138,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, GpuHalspecOwner
+     // default
+     else
+     {
+-        pThis->__kbusHasPcieBar1P2PMapping__ = &kbusHasPcieBar1P2PMapping_d69453;
++        pThis->__kbusHasPcieBar1P2PMapping__ = &kbusHasPcieBar1P2PMapping_GH100;
+     }
+ 
+     // kbusIsPcieBar1P2PMappingSupported -- halified (2 hals) body
+@@ -1150,7 +1150,7 @@ static void __nvoc_init_funcTable_KernelBus_1(KernelBus *pThis, GpuHalspecOwner
+     // default
+     else
+     {
+-        pThis->__kbusIsPcieBar1P2PMappingSupported__ = &kbusIsPcieBar1P2PMappingSupported_d69453;
++        pThis->__kbusIsPcieBar1P2PMappingSupported__ = &kbusIsPcieBar1P2PMappingSupported_GH100;
+     }
+ 
+     // kbusCheckFlaSupportedAndInit -- halified (2 hals) body
+diff --git a/src/nvidia/src/kernel/gpu/bif/kernel_bif.c b/src/nvidia/src/kernel/gpu/bif/kernel_bif.c
+index 1ff7624..9c5c4f6 100644
+--- a/src/nvidia/src/kernel/gpu/bif/kernel_bif.c
++++ b/src/nvidia/src/kernel/gpu/bif/kernel_bif.c
+@@ -1126,9 +1126,12 @@ _kbifInitRegistryOverrides
+ )
+ {
+     NvU32 data32;
++    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++    NvBool bCmp170hx = (devId == 0x20C2 || devId == 0x2082);
+ 
+-    // P2P Override
+-    pKernelBif->p2pOverride = BIF_P2P_NOT_OVERRIDEN;
++    // P2P Override: on CMP 170HX/220HX default to both reads+writes enabled
++    // so BAR1 P2P works out of the box (cmpunlocker P2P unlock)
++    pKernelBif->p2pOverride = bCmp170hx ? 0x11 : BIF_P2P_NOT_OVERRIDEN;
+     if (osReadRegistryDword(pGpu, NV_REG_STR_CL_FORCE_P2P, &data32) == NV_OK)
+     {
+         pKernelBif->p2pOverride = data32;
+@@ -1144,7 +1147,10 @@ _kbifInitRegistryOverrides
+         pKernelBif->forceP2PType = data32;
+     }
+ 
+-    pKernelBif->pcieP2PType = NV_REG_STR_RM_PCIEP2P_TYPE_DEFAULT;
++    // cmpunlocker P2P: force BAR1 P2P as the default connection type on
++    // CMP 170HX/220HX instead of NV_REG_STR_RM_PCIEP2P_TYPE_DEFAULT
++    pKernelBif->pcieP2PType = bCmp170hx ? NV_REG_STR_RM_PCIEP2P_TYPE_BAR1
++                                         : NV_REG_STR_RM_PCIEP2P_TYPE_DEFAULT;
+     if (osReadRegistryDword(pGpu, NV_REG_STR_RM_PCIEP2P_TYPE, &data32) == NV_OK)
+     {
+         pKernelBif->pcieP2PType = data32;
+diff --git a/src/nvidia/src/kernel/gpu/bus/arch/pascal/kern_bus_gp100.c b/src/nvidia/src/kernel/gpu/bus/arch/pascal/kern_bus_gp100.c
+index 8f9f830..a48b14a 100644
+--- a/src/nvidia/src/kernel/gpu/bus/arch/pascal/kern_bus_gp100.c
++++ b/src/nvidia/src/kernel/gpu/bus/arch/pascal/kern_bus_gp100.c
+@@ -65,6 +65,13 @@ kbusCreateP2PMapping_GP100
+         return kbusCreateP2PMappingForNvlink_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, peer0, peer1, attributes);
+     }
+ 
++    // cmpunlocker P2P: BAR1 P2P branch (attribute set from pKernelBif->pcieP2PType,
++    // which is only defaulted to BAR1 on CMP 170HX/220HX, see kernel_bif.c)
++    if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE_BAR1, attributes))
++    {
++        return kbusCreateP2PMappingForBar1P2P_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, attributes);
++    }
++
+     if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE, attributes))
+     {
+         return kbusCreateP2PMappingForMailbox_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, peer0, peer1, attributes);
+@@ -643,6 +650,12 @@ kbusRemoveP2PMapping_GP100
+         return kbusRemoveP2PMappingForNvlink_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, peer0, peer1, attributes);
+     }
+ 
++    // cmpunlocker P2P: BAR1 P2P branch, see kbusCreateP2PMapping_GP100 above
++    if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE_BAR1, attributes))
++    {
++        return kbusRemoveP2PMappingForBar1P2P_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, attributes);
++    }
++
+     if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE, attributes))
+     {
+         return kbusRemoveP2PMappingForMailbox_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, peer0, peer1, attributes);
+diff --git a/src/nvidia/src/kernel/mem_mgr/io_vaspace.c b/src/nvidia/src/kernel/mem_mgr/io_vaspace.c
+index 302759e..c731d7c 100644
+--- a/src/nvidia/src/kernel/mem_mgr/io_vaspace.c
++++ b/src/nvidia/src/kernel/mem_mgr/io_vaspace.c
+@@ -59,14 +59,18 @@ iovaspaceConstruct__IMPL
+ void
+ iovaspaceDestruct_IMPL(OBJIOVASPACE *pIOVAS)
+ {
+-    OBJVASPACE *pVAS = staticCast(pIOVAS, OBJVASPACE);
+-
+-    if (pIOVAS->mappingCount != 0)
+-    {
+-        NV_PRINTF(LEVEL_ERROR, "%lld left-over mappings in IOVAS 0x%x\n",
+-                  pIOVAS->mappingCount, pVAS->vaspaceId);
+-        DBG_BREAKPOINT();
+-    }
++    // cmpunlocker P2P: BAR1 P2P mappings on CMP 170HX/220HX may legitimately
++    // outlive this IOVAS teardown (see docs/P2P.md); the
++    // leak-check below is diagnostic-only and disabled globally since this
++    // function has no pGpu/device-ID context to gate on.
++    // OBJVASPACE *pVAS = staticCast(pIOVAS, OBJVASPACE);
++
++    // if (pIOVAS->mappingCount != 0)
++    // {
++    //     NV_PRINTF(LEVEL_ERROR, "%lld left-over mappings in IOVAS 0x%x\n",
++    //               pIOVAS->mappingCount, pVAS->vaspaceId);
++    //     DBG_BREAKPOINT();
++    // }
+ }
+ 
+ NV_STATUS
+@@ -603,7 +607,8 @@ OBJIOVASPACE *iovaspaceFromMapping(PIOVAMAPPING pIovaMapping)
+     // not, the mapping has been left dangling outlasting the IOVAS it was
+     // under.
+     //
+-    NV_ASSERT(pIOVAS != NULL);
++    // cmpunlocker P2P: disabled, see comment in iovaspaceDestruct_IMPL above
++    // NV_ASSERT(pIOVAS != NULL);
+ 
+     return pIOVAS;
+ }
+@@ -612,7 +617,7 @@ void iovaMappingDestroy(PIOVAMAPPING pIovaMapping)
+ {
+     OBJIOVASPACE *pIOVAS = iovaspaceFromMapping(pIovaMapping);
+ 
+-    NV_ASSERT_OR_RETURN_VOID(pIOVAS != NULL);
++    if (pIOVAS == NULL) return;
+     iovaspaceDestroyMapping(pIOVAS, pIovaMapping);
+ }
+ 
+diff --git a/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c b/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
+index 2bba5b5..3de77d0 100644
+--- a/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
++++ b/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
+@@ -3967,7 +3967,8 @@ nvGpuOpsBuildExternalAllocPtes
+     NvBool         isPeerSupported,
+     NvBool         isBar1P2PSupported,
+     NvU32          peerId,
+-    gpuExternalMappingInfo *pGpuExternalMappingInfo
++    gpuExternalMappingInfo *pGpuExternalMappingInfo,
++    RmPhysAddr     bar1BusAddr
+ )
+ {
+     NV_STATUS               status              = NV_OK;
+@@ -4124,7 +4125,14 @@ nvGpuOpsBuildExternalAllocPtes
+         NvU32 ptePcfHw  = 0;
+ 
+          nvFieldSetBool(&pPteFmt->fldValid, NV_TRUE, pte.v8);
+-         gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++         if ((aperture == GMMU_APERTURE_PEER) && isBar1P2PSupported)
++         {
++             gmmuFieldSetAperture(&pPteFmt->fldAperture, GMMU_APERTURE_SYS_COH, pte.v8);
++         }
++         else
++         {
++             gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++         }
+          nvFieldSet32(&pPteFmt->fldKind, kind, pte.v8);
+ 
+          ptePcfSw |= vol         ? (1 << SW_MMU_PCF_UNCACHED_IDX) : 0;
+@@ -4168,7 +4176,14 @@ nvGpuOpsBuildExternalAllocPtes
+         if (nvFieldIsValid32(&pPteFmt->fldAtomicDisable.desc))
+             nvFieldSetBool(&pPteFmt->fldAtomicDisable, !atomic, pte.v8);
+ 
+-        gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++        if ((aperture == GMMU_APERTURE_PEER) && isBar1P2PSupported)
++        {
++            gmmuFieldSetAperture(&pPteFmt->fldAperture, GMMU_APERTURE_SYS_NONCOH, pte.v8);
++        }
++        else
++        {
++            gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++        }
+ 
+         if (!isCompressedKind)
+         {
+@@ -4179,7 +4194,12 @@ nvGpuOpsBuildExternalAllocPtes
+         }
+     }
+ 
+-    if (aperture == GMMU_APERTURE_PEER)
++    if ((aperture == GMMU_APERTURE_PEER) && isBar1P2PSupported)
++    {
++        fabricBaseAddress = bar1BusAddr;
++    }
++
++    if ((aperture == GMMU_APERTURE_PEER) && !isBar1P2PSupported)
+     {
+         nvFieldSet32(&pPteFmt->fldPeerIndex, peerId, pte.v8);
+ 
+@@ -4438,7 +4458,8 @@ nvGpuOpsBuildExternalAllocPhysAddrs
+     NvBool      isPeerSupported,
+     NvBool      isBar1P2PSupported,
+     NvU32       peerId,
+-    UvmGpuExternalPhysAddrInfo *pGpuExternalPhysAddrInfo
++    UvmGpuExternalPhysAddrInfo *pGpuExternalPhysAddrInfo,
++    RmPhysAddr bar1BusAddr
+ )
+ {
+     NV_STATUS               status              = NV_OK;
+@@ -4516,7 +4537,12 @@ nvGpuOpsBuildExternalAllocPhysAddrs
+         return NV_ERR_BUFFER_TOO_SMALL;
+ 
+ 
+-    if (aperture == GMMU_APERTURE_PEER)
++    if ((aperture == GMMU_APERTURE_PEER) && isBar1P2PSupported)
++    {
++        fabricBaseAddress = bar1BusAddr;
++    }
++
++    if ((aperture == GMMU_APERTURE_PEER) && !isBar1P2PSupported)
+     {
+         //
+         // Any fabric memory descriptors are pre-encoded with the fabric base address
+@@ -4658,6 +4684,7 @@ NV_STATUS nvGpuOpsGetExternalAllocPtesOrPhysAddrs(struct gpuAddressSpace *vaSpac
+     Memory *pMemory = NULL;
+     PMEMORY_DESCRIPTOR pMemDesc = NULL;
+     OBJGPU *pMappingGpu = NULL;
++    RmPhysAddr bar1BusAddr = 0;
+     NvU32 peerId = 0;
+     NvBool isSliSupported = NV_FALSE;
+     NvBool isPeerSupported = NV_FALSE;
+@@ -4797,6 +4824,8 @@ NV_STATUS nvGpuOpsGetExternalAllocPtesOrPhysAddrs(struct gpuAddressSpace *vaSpac
+                                                        &peerId);
+             if (status != NV_OK)
+                 goto freeGpaMemdesc;
++
++            bar1BusAddr = gpumgrGetGpuPhysFbAddr(pAdjustedMemDesc->pGpu);
+         }
+ 
+         //
+@@ -4885,14 +4914,15 @@ NV_STATUS nvGpuOpsGetExternalAllocPtesOrPhysAddrs(struct gpuAddressSpace *vaSpac
+                                                 isPeerSupported,
+                                                 isBar1P2PSupported,
+                                                 peerId,
+-                                                pGpuExternalMappingInfo);
++                                                pGpuExternalMappingInfo,
++                                                bar1BusAddr);
+     }
+ 
+     if (pGpuExternalPhysAddrInfo != NULL)
+     {
+         status = nvGpuOpsBuildExternalAllocPhysAddrs(pVAS, vaSpace->device->session, pMappingGpu, pAdjustedMemDesc,
+                                                      pMemory, offset, size, isIndirectPeerSupported, isPeerSupported,
+-                                                     isBar1P2PSupported, peerId, pGpuExternalPhysAddrInfo);
++                                                     isBar1P2PSupported, peerId, pGpuExternalPhysAddrInfo, bar1BusAddr);
+     }
+ 
+ freeGpaMemdesc:
+@@ -11046,7 +11076,7 @@ NV_STATUS nvGpuOpsGetChannelResourcePtes(struct gpuAddressSpace *vaSpace,
+ 
+     status = nvGpuOpsBuildExternalAllocPtes(pVAS, vaSpace->device->session, pMappingGpu, pMemDesc, NULL,
+                                             offset, size, NV_FALSE, NV_FALSE,
+-                                            NV_FALSE, 0, pGpuExternalMappingInfo);
++                                            NV_FALSE, 0, pGpuExternalMappingInfo, 0);
+ 
+     _nvGpuOpsLocksRelease(&acquiredLocks);
+     threadStateFree(&threadState, THREAD_STATE_FLAGS_NONE);

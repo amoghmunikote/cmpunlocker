@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mapfile -t SUPPORTED_VERSIONS < <(grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' "${SCRIPT_DIR}/VERSION")
 DEFAULT_VERSION="${SUPPORTED_VERSIONS[0]:-}"
 VERSION="${CMPUNLOCKER_DRIVER_VERSION:-${DEFAULT_VERSION}}"
+ENABLE_P2P="${CMPUNLOCKER_ENABLE_P2P:-0}"
 PATCH_DIR="${SCRIPT_DIR}/patches"
 BUILD_ROOT="${CMPUNLOCKER_BUILD_DIR:-${SCRIPT_DIR}/.build}"
 SRC_NAME="open-gpu-kernel-modules-${VERSION}"
@@ -14,6 +15,7 @@ TARBALL_URL="https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags
 KVER="$(uname -r)"
 KSRC="/lib/modules/${KVER}/build"
 INSTALL_MOD_DIR="/lib/modules/${KVER}/updates/cmpunlocker"
+PREVIOUS_P2P="$(cat "${INSTALL_MOD_DIR}/p2p_enabled" 2>/dev/null || true)"
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -34,6 +36,11 @@ version_supported() {
     done
     return 1
 }
+
+case "${ENABLE_P2P}" in
+    0|1) ;;
+    *) die "CMPUNLOCKER_ENABLE_P2P must be 0 or 1 (got: '${ENABLE_P2P}')" ;;
+esac
 
 [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo ${SCRIPT_DIR}/build.sh"
 [[ -n "${VERSION}" ]] || die "No driver version set (driver/VERSION empty and CMPUNLOCKER_DRIVER_VERSION unset)"
@@ -58,6 +65,18 @@ PATCH_ORDER=(
     bar1-resize-unlock.patch
     cmp-sku-mask.patch
 )
+P2P_PATCH_ORDER=(
+    p2p/0007-p2p-caps.patch
+    p2p/0011-p2p-bar1.patch
+    p2p/0013-skip-mailbox-peer-preinit.patch
+    p2p/0015-bar1p2p-readcap-override.patch
+)
+if [[ "${ENABLE_P2P}" -eq 1 ]]; then
+    PATCH_ORDER+=("${P2P_PATCH_ORDER[@]}")
+    info "GPU-to-GPU BAR1 P2P enabled"
+else
+    info "GPU-to-GPU P2P overrides disabled"
+fi
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
     p="${PATCH_DIR}/${name}"
@@ -78,7 +97,7 @@ CONSTANTS="${SCRIPT_DIR}/../common/constants.yaml"
 CONSTANTS_ENV="$(python3 "${SCRIPT_DIR}/../tools/read-constants.py" "${CONSTANTS}" "${PATCH_DIR}" "${SCRIPT_DIR}/build.sh" "${PROFILE}")" || die "common/constants.yaml rejected (see error above)"
 eval "${CONSTANTS_ENV}"
 
-BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
+BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:p2p=${ENABLE_P2P}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
 
 mkdir -p "${BUILD_ROOT}"
 
@@ -111,7 +130,13 @@ else
     cd "${SRC_DIR}"
     for i in "${!PATCH_ORDER[@]}"; do
         info "  ${PATCH_ORDER[$i]}"
-        patch -p1 < "${PATCH_FILES[$i]}"
+        # Optional P2P hunks must match their complete context. Never use
+        # fuzz to hide a dependency on an absent patch or a changed driver API.
+        if [[ "${PATCH_ORDER[$i]}" == p2p/* ]]; then
+            patch --batch --forward --fuzz=0 -p1 < "${PATCH_FILES[$i]}"
+        else
+            patch --batch --forward -p1 < "${PATCH_FILES[$i]}"
+        fi
     done
     ok "All patches applied"
 
@@ -214,24 +239,37 @@ for ko in "${KO_FILES[@]}"; do
     ok "Installed ${base}"
 done
 
+# Keep one RegistryDwords option: separate modprobe entries can replace each
+# other. Rewrite it on every install so a later build without P2P removes the
+# static-BAR1/P2P settings. This must precede initramfs generation and modprobe.
+REGISTRY_DWORDS="RmForceEnableGen2=1;RMPcieLinkSpeed=0x1"
+if [[ "${ENABLE_P2P}" -eq 1 ]]; then
+    REGISTRY_DWORDS+=";RMForceStaticBar1=1;RMPcieP2PType=1"
+fi
+mkdir -p /etc/modprobe.d
+printf 'options nvidia NVreg_RegistryDwords="%s"\n' "${REGISTRY_DWORDS}" \
+    > /etc/modprobe.d/cmp-pcie-gen2.conf
+printf '%s\n' "${ENABLE_P2P}" > "${INSTALL_MOD_DIR}/p2p_enabled"
+ok "Configured Gen2/P2P module options (P2P=${ENABLE_P2P})"
+
 depmod -a "${KVER}"
 ok "depmod complete"
 rebuild_initramfs() {
     if command -v update-initramfs &>/dev/null; then
         info "Rebuilding initramfs (update-initramfs)..."
-        update-initramfs -u -k "${KVER}"
+        update-initramfs -u -k "${KVER}" || return 1
         ok "initramfs rebuilt"
         return 0
     fi
     if command -v dracut &>/dev/null; then
         info "Rebuilding initramfs (dracut)..."
-        dracut --force --kver "${KVER}"
+        dracut --force --kver "${KVER}" || return 1
         ok "initramfs rebuilt"
         return 0
     fi
     if command -v mkinitcpio &>/dev/null; then
         info "Rebuilding initramfs (mkinitcpio)..."
-        mkinitcpio -P
+        mkinitcpio -P || return 1
         ok "initramfs rebuilt"
         return 0
     fi
@@ -239,7 +277,17 @@ rebuild_initramfs() {
     return 1
 }
 
-rebuild_initramfs || true
+if ! rebuild_initramfs; then
+    if [[ "${ENABLE_P2P}" -eq 1 || "${PREVIOUS_P2P}" == "1" ]]; then
+        die "Modules and settings installed, but initramfs was not rebuilt. Fix initramfs generation and rerun this build before cold rebooting."
+    fi
+    warn "Modules installed; rebuild initramfs manually before rebooting."
+fi
+if [[ "${ENABLE_P2P}" -eq 1 || "${PREVIOUS_P2P}" == "1" ]]; then
+    ok "Modules and P2P settings installed for the next boot"
+    info "P2P builds require a cold reboot; skipping live NVIDIA module reload."
+    exit 0
+fi
 resolved="$(modprobe -n -v nvidia 2>/dev/null | awk '/insmod/ {print $2; exit}' || true)"
 if [[ -n "${resolved}" ]]; then
     info "modprobe will load: ${resolved}"

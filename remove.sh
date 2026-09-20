@@ -17,7 +17,7 @@ if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     echo "  - Stops cmpunlocker systemd service"
     echo "  - Removes /lib/modules/*/updates/cmpunlocker/"
     echo "  - Removes ${INSTALL_DIR} (legacy install dir, if present)"
-    echo "  - Removes cmpretrain service / modprobe Gen2 helpers"
+    echo "  - Removes cmpretrain service / modprobe Gen2 and P2P settings"
     echo "  - Removes VM passthrough helpers (service, udev rule, vfio modprobe conf)"
     echo "  - Rebuilds the stock nvidia DKMS modules that install.sh removed"
     echo "  - Reloads stock NVIDIA modules (brief display interruption)"

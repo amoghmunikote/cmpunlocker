@@ -1,0 +1,31 @@
+CMP BAR1-P2P read capability override, ported from cmpunlocker-p2p's 0015.
+Rebased onto the uninstrumented source: this does not require the disabled
+0014-hostsys-bar1p2p-debug.patch. Applied only with --p2p.
+
+--- a/src/nvidia/src/kernel/platform/p2p/p2p_caps.c
++++ b/src/nvidia/src/kernel/platform/p2p/p2p_caps.c
+@@ -669,6 +669,24 @@
+         NV_PRINTF(LEVEL_INFO, "Unrecognized CPU. Read Cap is disabled\n");
+     }
+ 
++    // cmpunlocker --p2p: bridge discovery can reject BAR1 reads even when
++    // the host carries peer traffic. Preserve the source branch's CMP-only
++    // override; the operator must verify real reads/writes on this topology.
++    // Selecting --p2p does not make an unsupported host transport work.
++    {
++        NvU32 cmpDevId = pGpu->idInfo.PCIDeviceID >> 16;
++
++        if (((cmpDevId == 0x20C2) || (cmpDevId == 0x2082)) &&
++            (*pP2PReadCapStatus != NV0000_P2P_CAPS_STATUS_OK))
++        {
++            NV_PRINTF(LEVEL_ERROR,
++                      "CMPUNLOCK_BAR1P2P: forcing read cap OK for CMP devId=0x%x "
++                      "(--p2p; verify real peer transfers)\n",
++                      cmpDevId);
++            *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_OK;
++        }
++    }
++
+     return NV_OK;
+ }
+ 

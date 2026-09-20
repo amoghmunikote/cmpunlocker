@@ -29,11 +29,12 @@ def present(blob_lower, value):
     return any(re.search(re.escape(f) + r"u?\b", blob_lower) for f in forms)
 
 
-def read_patch_order(build_sh):
+def read_patch_order(build_sh, array_name="PATCH_ORDER"):
     text = io.open(build_sh, encoding="utf-8").read()
-    m = re.search(r"PATCH_ORDER=\(\n(.*?)\n\)", text, re.S)
+    m = re.search(r"^" + re.escape(array_name) + r"=\(\n(.*?)\n\)",
+                  text, re.S | re.M)
     if not m:
-        sys.exit("error: PATCH_ORDER not found in %s" % build_sh)
+        sys.exit("error: %s not found in %s" % (array_name, build_sh))
     return [l.strip() for l in m.group(1).splitlines() if l.strip()]
 
 
@@ -64,6 +65,14 @@ def main():
     declared = {u["patch"] for u in unlocks.values() if u.get("patch")}
 
     problems = []
+    p2p_order = read_patch_order(build_sh, "P2P_PATCH_ORDER")
+    p2p_declared = ((c.get("optional_features") or {}).get("p2p") or {}).get("patches", [])
+    if p2p_order != p2p_declared:
+        problems.append("optional_features.p2p.patches does not match P2P_PATCH_ORDER")
+    for pname in p2p_order:
+        if not os.path.isfile(os.path.join(patch_dir, pname)):
+            problems.append("optional P2P patch missing: %s" % pname)
+
     for name in sorted(set(order) - declared):
         problems.append("patch %s is built but not declared in constants.yaml"
                         % name)
