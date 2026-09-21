@@ -306,7 +306,12 @@ iommu_params_for_cpu() {
     vendor="$(awk -F': ' '/^vendor_id/{print $2; exit}' /proc/cpuinfo 2>/dev/null || true)"
     case "${vendor}" in
         GenuineIntel) echo "intel_iommu=on iommu=pt" ;;
-        AuthenticAMD) echo "amd_iommu=on iommu=pt" ;;
+        # amd_iommu= has no "on": the kernel logs "AMD-Vi: Unknown option - 'on'"
+        # and ignores it. AMD-Vi enables itself from the BIOS IVRS table, so
+        # passthrough mode is all we need to ask for. If the IOMMU stays absent
+        # (/sys/class/iommu empty), enable it in BIOS/UEFI — no cmdline token
+        # substitutes for that.
+        AuthenticAMD) echo "iommu=pt" ;;
         *) echo "" ;;
     esac
 }

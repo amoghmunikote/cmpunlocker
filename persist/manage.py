@@ -274,6 +274,10 @@ class Manager:
         packages = set()
         for line in rows.splitlines():
             name, status = line.split("\t", 1)
+            # apt-mark reports holds without the :arch qualifier that
+            # ${binary:Package} carries on multi-arch packages. Compare and
+            # record unqualified names so the check below is like-for-like.
+            name = name.split(":", 1)[0]
             # Keep versioned nvidia-firmware-610-* (GSP) with the driver, but do
             # not hold independent linux-firmware packages.
             if (status == "installed" and "nvidia" in name.lower() and
