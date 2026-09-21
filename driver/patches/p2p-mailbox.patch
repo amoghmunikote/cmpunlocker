@@ -1,0 +1,189 @@
+Ported from asm64-hooligan/cmpunlocker a439e03442a14cd891b98d79fd60cc624a528c2e.
+Mailbox mode only; do not combine with the BAR1 or skip-mailbox patches.
+
+--- a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm200.c
++++ b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm200.c
+@@ -31,6 +31,127 @@
+ #include "gpu/bif/kernel_bif.h"
+ 
+ #include "published/maxwell/gm200/dev_nv_p2p.h"
++
++/* CMP mailbox transport: temporary privilege trap, restored after each RPC.
++ * Adapted from asm64-hooligan/cmpunlocker a439e03 (duggasco).
++ * This file is patched only in mailbox mode. GPU locks are held by the caller. */
++#define CMP_REG_TRAP31_MATCH         0x0012247cU
++#define CMP_REG_TRAP31_MASK          0x001224fcU
++#define CMP_REG_TRAP31_DATA1         0x0012257cU
++#define CMP_REG_TRAP31_DATA2         0x001225fcU
++#define CMP_REG_TRAP31_ACTION        0x0012267cU
++#define CMP_REG_TRAP31_CFG           0x001226fcU
++#define CMP_REG_TRAP31_PLM           0x0012277cU
++
++/* Match writes from any PRI source at L0/L1/L2 in 0x139000..0x139fff. */
++#define CMP_TRAP31_P2P_MATCH         0x00139000U
++#define CMP_TRAP31_P2P_MASK          0xfc000fffU
++#define CMP_TRAP31_P2P_DATA1         0xc0000000U
++#define CMP_TRAP31_P2P_CFG           0x0001c010U
++#define CMP_TRAP31_SET_PRIV_LEVEL    0x00100000U
++
++typedef struct CMPUNLOCK_P2P_TRAP_STATE
++{
++    NvU32  match;
++    NvU32  mask;
++    NvU32  data1;
++    NvU32  data2;
++    NvU32  action;
++    NvU32  cfg;
++    NvBool valid;
++} CMPUNLOCK_P2P_TRAP_STATE;
++
++static NvBool
++cmpUnlockIsTarget(OBJGPU *pGpu)
++{
++    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++    return (devId == 0x20C2U || devId == 0x2082U);
++}
++
++static void
++cmpUnlockP2PTrapRestore
++(
++    OBJGPU *pGpu,
++    CMPUNLOCK_P2P_TRAP_STATE *pState
++)
++{
++    if (!cmpUnlockIsTarget(pGpu) || pState == NULL || !pState->valid)
++        return;
++
++    /* Stop acting first, restore the payload, then restore ACTION last. */
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_ACTION, 0);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_CFG,    pState->cfg);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_DATA2,  pState->data2);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_DATA1,  pState->data1);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_MASK,   pState->mask);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_MATCH,  pState->match);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_ACTION, pState->action);
++    pState->valid = NV_FALSE;
++
++}
++
++static NvBool
++cmpUnlockP2PTrapArm
++(
++    OBJGPU *pGpu,
++    CMPUNLOCK_P2P_TRAP_STATE *pState
++)
++{
++    NvU32 plm;
++    NvBool armed;
++
++    /*
++     * Nothing to do is not a failure. Returning NV_TRUE here keeps mailbox
++     * setup working normally for any GPU this driver does not target.
++     */
++    if (!cmpUnlockIsTarget(pGpu))
++        return NV_TRUE;
++
++    if (pState == NULL)
++        return NV_FALSE;
++
++    pState->match  = GPU_REG_RD32(pGpu, CMP_REG_TRAP31_MATCH);
++    pState->mask   = GPU_REG_RD32(pGpu, CMP_REG_TRAP31_MASK);
++    pState->data1  = GPU_REG_RD32(pGpu, CMP_REG_TRAP31_DATA1);
++    pState->data2  = GPU_REG_RD32(pGpu, CMP_REG_TRAP31_DATA2);
++    pState->action = GPU_REG_RD32(pGpu, CMP_REG_TRAP31_ACTION);
++    pState->cfg    = GPU_REG_RD32(pGpu, CMP_REG_TRAP31_CFG);
++    pState->valid  = NV_TRUE;
++
++    plm = GPU_REG_RD32(pGpu, CMP_REG_TRAP31_PLM);
++    if (plm != 0xffffffffU)
++    {
++        NV_PRINTF(LEVEL_ERROR,
++                  "CMPUNLOCK: P2P trap31 unavailable gpuId=0x%x PLM=0x%08x\n",
++                  pGpu->gpuId, plm);
++        pState->valid = NV_FALSE;
++        return NV_FALSE;
++    }
++
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_ACTION, 0);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_DATA1, CMP_TRAP31_P2P_DATA1);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_DATA2, 0);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_CFG, CMP_TRAP31_P2P_CFG);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_MATCH, CMP_TRAP31_P2P_MATCH);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_MASK, CMP_TRAP31_P2P_MASK);
++    GPU_REG_WR32(pGpu, CMP_REG_TRAP31_ACTION, CMP_TRAP31_SET_PRIV_LEVEL);
++
++    armed =
++        GPU_REG_RD32(pGpu, CMP_REG_TRAP31_MATCH) == CMP_TRAP31_P2P_MATCH &&
++        GPU_REG_RD32(pGpu, CMP_REG_TRAP31_MASK) == CMP_TRAP31_P2P_MASK &&
++        GPU_REG_RD32(pGpu, CMP_REG_TRAP31_DATA1) == CMP_TRAP31_P2P_DATA1 &&
++        GPU_REG_RD32(pGpu, CMP_REG_TRAP31_DATA2) == 0 &&
++        GPU_REG_RD32(pGpu, CMP_REG_TRAP31_CFG) == CMP_TRAP31_P2P_CFG &&
++        GPU_REG_RD32(pGpu, CMP_REG_TRAP31_ACTION) == CMP_TRAP31_SET_PRIV_LEVEL;
++
++    if (!armed)
++        cmpUnlockP2PTrapRestore(pGpu, pState);
++
++    return armed;
++
++}
++
++
+ 
+ // Defines for PCIE P2P
+ #define PCIE_P2P_MAX_WRITE_MAILBOX_ADDR                                  \
+@@ -71,6 +192,8 @@
+     RM_API *pRmApi1     = GPU_GET_PHYSICAL_RMAPI(pGpu1);
+     NV2080_CTRL_CMD_INTERNAL_BUS_SETUP_P2P_MAILBOX_LOCAL_PARAMS  params0 = {0};
+     NV2080_CTRL_CMD_INTERNAL_BUS_SETUP_P2P_MAILBOX_REMOTE_PARAMS params1 = {0};
++    CMPUNLOCK_P2P_TRAP_STATE localTrapState = {0};
++    CMPUNLOCK_P2P_TRAP_STATE remoteTrapState = {0};
+     NV_STATUS status;
+ 
+     NV_ASSERT_OR_RETURN_VOID(local2Remote < P2P_MAX_NUM_PEERS);
+@@ -113,6 +236,7 @@
+     NV_ASSERT((remoteWMBoxAddrU64 & 0xFFFF) == 0);
+ 
+     // Setup PCIE P2P Mailbox on local GPU
++    NV_ASSERT_OR_RETURN_VOID(cmpUnlockP2PTrapArm(pGpu0, &localTrapState));
+     params0.local2Remote                = local2Remote;
+     params0.remote2Local                = remote2Local;
+     params0.localP2PDomainRemoteAddr    = localP2PDomainRemoteAddr;
+@@ -127,9 +251,11 @@
+                               NV2080_CTRL_CMD_INTERNAL_BUS_SETUP_P2P_MAILBOX_LOCAL,
+                               &params0,
+                               sizeof(NV2080_CTRL_CMD_INTERNAL_BUS_SETUP_P2P_MAILBOX_LOCAL_PARAMS));
+-    NV_ASSERT(status == NV_OK);
++    cmpUnlockP2PTrapRestore(pGpu0, &localTrapState);
++    NV_ASSERT_OR_RETURN_VOID(status == NV_OK);
+ 
+     // Setup PCIE P2P Mailbox on remote GPU
++    NV_ASSERT_OR_RETURN_VOID(cmpUnlockP2PTrapArm(pGpu1, &remoteTrapState));
+     params1.local2Remote                = local2Remote;
+     params1.remote2Local                = remote2Local;
+     params1.localP2PDomainRemoteAddr    = localP2PDomainRemoteAddr;
+@@ -143,9 +269,14 @@
+                               NV2080_CTRL_CMD_INTERNAL_BUS_SETUP_P2P_MAILBOX_REMOTE,
+                               &params1,
+                               sizeof(NV2080_CTRL_CMD_INTERNAL_BUS_SETUP_P2P_MAILBOX_REMOTE_PARAMS));
+-    NV_ASSERT(status == NV_OK);
++    if (status != NV_OK)
++    {
++        cmpUnlockP2PTrapRestore(pGpu1, &remoteTrapState);
++        NV_ASSERT_OR_RETURN_VOID(status == NV_OK);
++    }
+ 
+     kbusWriteP2PWmbTag_HAL(pGpu1, pKernelBus1, remote2Local, params0.p2pWmbTag);
++    cmpUnlockP2PTrapRestore(pGpu1, &remoteTrapState);
+ }
+ 
+ void
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -4876,6 +4876,7 @@
+             { 0x00088ff8U, 0xffffffffU, 0xffffffffU, "XVE_C" },
+             { 0x00823b00U, 0xffffffffU, 0xffffffffU, "FEAT2" },
+             { 0x008200fcU, 0xffffffffU, 0xffffffffU, "OPT_PLM" },
++            { 0x0012277cU, 0xffffffffU, 0xffffffffU, "P2P_TRAP31" },
+             { 0x009a3c7cU, 0xffffffffU, 0xffffffffU, "FBPA_PLL0" },
+             { 0x009a3c80U, 0xffffffffU, 0xffffffffU, "FBPA_PLL1" },
+             { 0x009a3c84U, 0xffffffffU, 0xffffffffU, "FBPA_PLL2" },

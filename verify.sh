@@ -136,7 +136,9 @@ fi
 echo ""
 ok "All ${#GPU_BDFS[@]} unlockable GPU(s) report unlocked memory"
 
-if [[ -x "${SCRIPT_DIR}/tools/service.sh" ]]; then
+if [[ "$(cat "${INSTALL_MOD_DIR}/gen2_disabled" 2>/dev/null || echo 0)" == 1 ]]; then
+    info "Gen2 retraining disabled in this build; firmware link speed is expected"
+elif [[ -x "${SCRIPT_DIR}/tools/service.sh" ]]; then
     echo ""
     info "Checking negotiated PCIe generation"
     if ! "${SCRIPT_DIR}/tools/service.sh" verify; then

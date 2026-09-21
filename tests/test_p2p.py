@@ -27,6 +27,19 @@ def test_module_options_keep_gen2_and_select_bar1(enabled):
     assert "ForceP2P=" not in r.stdout
 
 
+@pytest.mark.parametrize("mode", ["off", "bar1", "mailbox"])
+@pytest.mark.parametrize("no_gen2", ["0", "1"])
+def test_transport_options_are_exclusive(mode, no_gen2):
+    r = subprocess.run(["bash", str(repo.ROOT / "tools/module-options.sh"), mode, no_gen2],
+                       capture_output=True, text=True, check=True)
+    assert ("RmForceEnableGen2" in r.stdout) == (no_gen2 == "0")
+    assert ("RMPcieLinkSpeed" in r.stdout) == (no_gen2 == "0")
+    assert ("RMForceStaticBar1" in r.stdout) == (mode == "bar1")
+    assert ("RMPcieP2PType" in r.stdout) == (mode == "bar1")
+    assert ("PeerMappingOverride=1;ForceP2P=17" in r.stdout) == (mode == "mailbox")
+    assert ("NVreg_EnableStreamMemOPs=1" in r.stdout) == (mode == "mailbox")
+
+
 def test_module_options_reject_invalid_mode():
     r = subprocess.run(["bash", str(repo.ROOT / "tools/module-options.sh"), "bad"],
                        capture_output=True, text=True)

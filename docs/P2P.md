@@ -1,4 +1,4 @@
-# CMP 170HX memory unlock and experimental BAR1 P2P
+# CMP 170HX memory unlock and experimental P2P
 
 This checkout uses [akumaburn/cmpunlocker2 at `8469dd9`](https://github.com/akumaburn/cmpunlocker2/commit/8469dd9754ba578ff984e197978f6b59bbd369e3)
 as its base, including the HBM PLL/memory privilege-mask changes. The original
@@ -13,8 +13,9 @@ The base already unlocks **64 GiB on 8 GB cards (`10de:20c2`)** and 40 GiB on
 P2P is separate. The base's BAR1 resize patch does not implement the peer
 mapping path. This port adds that path, the firmware capability override,
 the mailbox pre-registration fix, and the host read-capability override.
-They are applied **only with `--p2p`**. Builds without that option retain the
-base's P2P behavior; changing the option invalidates the build cache.
+They are applied **only with `--p2p` / `--p2p=bar1`**. Alternatively,
+`--p2p=mailbox` uses asm64's mailbox transport. Builds without either option
+retain the base's P2P behavior; changing modes invalidates the build cache.
 
 Source: [Bayley's `5a7bb4b`](https://github.com/bayley/cmpunlocker/tree/5a7bb4b7e5056306fe49e8b824787659abb19914).
 The [Satspace Static BAR1 result](https://github.com/satspace-cpu/cmp170hx-linux-p2p/blob/fe0fddf165238625a13876ce63b0f37d1bd5cb2a/docs/STATIC-BAR1-P2P.md)
@@ -31,6 +32,7 @@ system or Gen2 x4 links.
 | `p2p-bar1.patch` | `0011`: BAR1 transport HALs and peer PTE/physical-address translation |
 | `p2p-skip-mailbox.patch` | `0013`: keep mailbox peer IDs from blocking BAR1 selection |
 | `p2p-read-cap.patch` | `0015`: opt-in override of NVIDIA's host read whitelist |
+| `p2p-mailbox.patch` | asm64/duggasco `a439e03`: temporary privilege trap around mailbox RPCs, mailbox mode only |
 | `kernel-patches/` | Early 64 GiB BAR1 allocation and bridge-window alignment fix |
 
 The port selects the five BAR1 HALs when constructing a CMP GPU's bus, rather
@@ -40,6 +42,35 @@ debug patch. The unrelated Blackwell UVM modification and global suppression of
 IOVAS lifetime diagnostics were not imported. Existing BAR1 resizing and the
 base's reserved-memory protection are retained. This is an adapted port, not
 a hardware-validated copy of either author's complete installation.
+
+## Mailbox alternative
+
+The [asm64 mailbox patch](https://github.com/asm64-hooligan/cmpunlocker/pull/12)
+addresses privilege-rejected writes during mailbox setup. It opens trap 31's
+privilege mask during the existing unlock, temporarily arms the trap around
+each setup RPC, and restores its prior state on success and failure. It is a
+different fix from Satspace's unsuccessful older mailbox trial.
+
+It uses a small window within the stock 64 MiB BAR1 and does not require the
+64 GiB assignment or our Linux allocation patches. The base's optional BAR1
+resize capability remains, but mailbox operation does not depend on it.
+
+```bash
+sudo ./install.sh --p2p=mailbox --no-passthrough --no-iommu
+sudo shutdown -h now
+# Power on, then verify.sh and the same CUDA content test below.
+```
+
+Mailbox builds include the CMP capability override and mailbox trap only.
+They exclude the static BAR1 HAL/PTE patches, mailbox bypass, and BAR1-specific
+host read override. Their module options are `NVreg_EnableStreamMemOPs=1` and
+`PeerMappingOverride=1;ForceP2P=17`; they do not force static BAR1. Mode changes
+replace the entire generated options line and take effect after cold boot.
+
+The author reports earlier successful content-checked transfers but explicitly
+could not rerun hardware validation for the exact submitted PR. Treat this as an
+experimental fallback, not guaranteed support for every EPYC root path or twelve
+simultaneous peers. Validate every required pair and your concurrent workload.
 
 ## Ubuntu 24 / EPYC / ROMED: start with three cards
 
@@ -80,9 +111,9 @@ firmware, BIOS setting or kernel was installed on the development Mac.
    independently of the reported VRAM size.
 
 3. If BAR1 is small or missing, follow [kernel-patches/README.md](../kernel-patches/README.md).
-   Driver-time resizing can be too late for the parent bridge windows. Kernel
+   Alternatively, test mailbox mode above. Driver-time resizing can be too late for the parent bridge windows. Kernel
    patches are unnecessary for the memory unlock and may be unnecessary for
-   P2P if every card already gets a full BAR1 and passes real transfers.
+   BAR1 P2P if every card already gets a full BAR1 and passes real transfers.
 
 4. Once all BAR1 checks pass, build the P2P variant:
 
@@ -96,10 +127,10 @@ firmware, BIOS setting or kernel was installed on the development Mac.
    nvidia-smi topo -p2p w
    ```
 
-   The installer writes one combined Gen2/P2P `NVreg_RegistryDwords` setting
+   In BAR1 mode the installer writes one combined Gen2/P2P `NVreg_RegistryDwords` setting
    **before rebuilding initramfs**, including `RMForceStaticBar1=1` and
    `RMPcieP2PType=1`. Check for conflicting NVIDIA options left by earlier
-   experiments in `/etc/modprobe.d`. Do not add a competing `ForceP2P=0x11`
+   experiments in `/etc/modprobe.d`. In BAR1 mode do not add a competing `ForceP2P=0x11`
    setting or Satspace's host-specific link-speed settings. Installation and
    removal leave the running NVIDIA driver loaded until cold boot.
 
@@ -129,9 +160,9 @@ IOMMU disabled; Bayley describes its own host configuration. If transfers fail
 despite full BAR1, investigate IOMMU translation, ACS redirection and the actual
 PCIe root path. Changing IOMMU/ACS affects DMA isolation and VM passthrough;
 this installer deliberately does not guess such changes for the EPYC host.
-`--p2p` does not alter PCIe lanes or make unsupported routes work.
+Neither P2P mode alters PCIe lanes or makes unsupported routes work.
 
-Twelve 64 GiB BAR1 resources need **768 GiB of device MMIO space before bridge
+In BAR1 mode, twelve 64 GiB BAR1 resources need **768 GiB of device MMIO space before bridge
 alignment overhead**, in addition to other devices. That is address space, not
 system RAM. Budget based on the actual switches/root ports and available BIOS
 MMIO window; do not copy Bayley's switch addresses or `hpmmioprefsize` blindly.
@@ -145,22 +176,32 @@ concurrent peer usage separately; group workloads around verified routes.
 ## Rollback and updates
 
 To keep the memory unlock but remove P2P, rerun `install.sh` **without `--p2p`**
-and cold boot. It rebuilds without the optional patches and removes static BAR1
+or with `--p2p=off`, and cold boot. It rebuilds without the optional patches and removes P2P
 options from its module configuration. `sudo ./remove.sh --yes` removes the
 patched NVIDIA modules and their module options; cold boot to activate stock
 modules. Separately installed custom Linux kernels remain installed.
 
-As in the base repository, rerun installation after kernel or NVIDIA driver
-updates. A stock replacement kernel does not include the BAR1 allocation
-patches. Keep a working stock kernel available in the boot menu.
+Kernel/header hooks now rebuild the saved NVIDIA configuration automatically;
+see [maintenance and recovery](PERSISTENCE.md). NVIDIA driver upgrades still
+require reinstalling with a supported matching version. A stock replacement
+Linux kernel does not inherit BAR1 allocation patches. Keep a known working
+kernel available in the boot menu.
+
+If Gen2 retraining makes cards disappear, cold boot and reinstall with
+`--no-gen2` plus your other options. This omits both driver retrain patches and
+disables any previously installed retrain service. P2P remains selectable, but
+throughput will reflect the link speed left by firmware. `--no-gen2-service`
+alone does not disable the driver retrains.
 
 ## Validation limits
 
-Local validation: **58 tests passed, 1 skipped**. This includes patch application
-for all four listed driver versions with P2P off/on, and Linux x86-64
-cross-compilation of the changed resource-manager C files and the base's GSP
-unlock file on all four versions. The Linux passthrough-module build was skipped
-on macOS. Shell syntax, ShellCheck, constants and BAR1 preflight tests also passed.
+The automated suite checks all four listed driver versions with P2P off/BAR1/
+mailbox and Gen2 on/off, applying patches with zero fuzz. It cross-compiles the
+changed resource-manager C sources (including GSP, scrub and mailbox code) for
+Linux x86-64. A native C harness injects local/remote RPC, register-write and PLM
+failures and checks that both mailbox traps are restored. Maintenance tests
+exercise saved options, missing headers, failed builds, mode changes and owned
+package holds. The Linux passthrough-module build is skipped on macOS.
 
 These checks cannot prove correct DMA routing, memory stability, CUDA correctness
 or performance on physical cards. Full kernel-module builds and compilation/run

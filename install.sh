@@ -12,25 +12,38 @@ PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
 CONFIGURE_PASSTHROUGH=1
-ENABLE_P2P=0
+P2P_MODE=off
+DISABLE_GEN2=0
+PERSIST_ARGS=()
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
         --profile=10gb|--profile=10GB) PROFILE_OVERRIDE="10gb" ;;
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
+        --no-gen2) DISABLE_GEN2=1; CONFIGURE_GEN2_SERVICE=0 ;;
         --no-passthrough) CONFIGURE_PASSTHROUGH=0 ;;
-        --p2p) ENABLE_P2P=1 ;;
+        --p2p|--p2p=bar1) P2P_MODE=bar1 ;;
+        --p2p=mailbox) P2P_MODE=mailbox ;;
+        --p2p=off) P2P_MODE=off ;;
+        --no-persist|--no-pin) PERSIST_ARGS+=("${arg}") ;;
         -h|--help)
             cat <<'EOF'
 Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
-                        [--no-passthrough] [--p2p]
+                        [--no-passthrough] [--p2p=bar1|mailbox|off] [--no-gen2]
+                        [--no-persist] [--no-pin]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
-  --p2p          Enable experimental BAR1 P2P and static BAR1 mappings.
+  --p2p[=bar1]   Enable experimental BAR1 P2P and static BAR1 mappings.
                   Requires a full BAR1 on each GPU and a working PCIe peer route.
                   Verify actual peer reads/writes after a cold boot; see docs/P2P.md.
+  --p2p=mailbox  Experimental mailbox P2P; full-size BAR1 is not required.
+  --p2p=off      Memory unlock only (default).
+  --no-gen2      Disable both driver retrain patches, forced speed options and
+                  the boot retrain service. Keep firmware link speed.
+  --no-persist   Disable automatic driver rebuilds after kernel/header updates.
+  --no-pin       Release only cmpunlocker's apt holds; allow NVIDIA updates.
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
@@ -64,7 +77,7 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 source "${SCRIPT_DIR}/common/lib.sh"
 
 banner
-step_init 7
+step_init 8
 
 step "Verifying root privileges"
 [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo ./install.sh"
@@ -222,7 +235,7 @@ ok "NVIDIA driver ${detected} is supported"
 [[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). Install linux-headers-$(uname -r) or kernel-devel."
 ok "Kernel headers present for $(uname -r)"
 
-if (( ENABLE_P2P == 1 )); then
+if [[ "${P2P_MODE}" == bar1 ]]; then
     info "Checking BAR1 allocation before enabling P2P"
     python3 "${SCRIPT_DIR}/tools/check-bar1.py" || die "BAR1 allocation is not ready for --p2p. Install without --p2p first, cold boot, and follow docs/P2P.md."
 fi
@@ -238,7 +251,8 @@ chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
 CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
 CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
-CMPUNLOCKER_ENABLE_P2P="${ENABLE_P2P}" \
+CMPUNLOCKER_P2P_MODE="${P2P_MODE}" \
+CMPUNLOCKER_DISABLE_GEN2="${DISABLE_GEN2}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
@@ -275,8 +289,13 @@ if (( CONFIGURE_GEN2_SERVICE == 1 )); then
     "${SCRIPT_DIR}/tools/service.sh" install
     ok "Early-boot Gen2 retrain service armed (not started in this session)"
 else
-    warn "--no-gen2-service given; early-boot PCIe retraining is not installed"
+    # A previous install may have armed the service. Disable it on reinstall.
+    bash "${SCRIPT_DIR}/tools/service.sh" remove
+    warn "Early-boot PCIe retraining disabled"
 fi
+
+step "Configuring kernel-update rebuilds and NVIDIA package holds"
+python3 "${SCRIPT_DIR}/persist/manage.py" install --source "${SCRIPT_DIR}" "${PERSIST_ARGS[@]}"
 
 info "Configuring IOMMU (passthrough)"
 IOMMU_STATUS="skipped"
@@ -415,8 +434,10 @@ banner
 echo "cmpunlocker install finished!"
 echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
 echo "Passthrough: ${PASSTHROUGH_STATUS}"
-if (( ENABLE_P2P == 1 )); then
-    echo "P2P: experimental BAR1 path enabled; verify with tools/p2p-test.cu after cold boot"
+if [[ "${P2P_MODE}" != off ]]; then
+    echo "P2P: experimental ${P2P_MODE} path enabled; verify with tools/p2p-test.cu after cold boot"
+fi
+if [[ "${P2P_MODE}" == bar1 ]]; then
     echo "Full BAR1 allocation may require the separate kernel-patches/; see docs/P2P.md"
 fi
 if [[ -n "${IOMMU_PARAMS}" && "${IOMMU_STATUS}" != "skipped" ]]; then
@@ -434,7 +455,11 @@ echo ""
 echo "Next:"
 echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
 echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
-echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
+if (( DISABLE_GEN2 == 0 )); then
+    echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
+else
+    echo "  3. Gen2 retraining disabled; the link keeps its firmware speed."
+fi
 echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
 echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
 echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
@@ -443,6 +468,7 @@ if (( CONFIGURE_GEN2_SERVICE == 1 )); then
     echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
 fi
 echo ""
-echo "This script removed the nvidia DKMS kernel modules. You will need to re-run this script after each kernel upgrade"
+echo "Rebuild status: sudo python3 /usr/lib/cmpunlocker/manage.py status"
+echo "Manual rebuild: sudo python3 /usr/lib/cmpunlocker/manage.py rebuild"
 echo "Log saved to: ${LOG_FILE}"
 echo ""

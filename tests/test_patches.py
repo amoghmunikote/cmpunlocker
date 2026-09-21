@@ -29,25 +29,37 @@ def tarball(version):
 
 
 def test_patch_order_covers_patch_dir():
-    assert sorted(repo.patch_order(p2p=True)) == sorted(p.name for p in PATCHES.glob("*.patch"))
+    assert set(repo.patch_order("bar1") + repo.patch_order("mailbox")) == {p.name for p in PATCHES.glob("*.patch")}
 
 
 @pytest.mark.parametrize("version", VERSIONS)
-@pytest.mark.parametrize("p2p", [False, True], ids=["memory", "p2p"])
-def test_patches_apply(version, p2p):
-    with patched_source(version, p2p):
-        pass
+@pytest.mark.parametrize("p2p", ["off", "bar1", "mailbox"])
+@pytest.mark.parametrize("gen2", [False, True], ids=["no-gen2", "gen2"])
+def test_patches_apply(version, p2p, gen2):
+    with patched_source(version, p2p, gen2) as src:
+        gsp = (src / "src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c").read_text()
+        # Tuning must remain a userspace operation with accessible HBM windows
+        # in every transport/Gen2 combination, including all live unicast FBPAs.
+        assert "SEC2_POSTBL_FBPA_UC_PLL_PLM" in gsp
+        assert '"FBPA_MEM"' in gsp and '"FBPA_PLL0"' in gsp
+        assert "fbpaOrphaned" in gsp
+        assert "CMPUNLOCK_MCLK_NDIV" not in gsp
+        assert '"/var/lib/cmpunlocker/dmem.bin"' in gsp
+        assert ("P2P_TRAP31" in gsp) == (p2p == "mailbox")
+        assert ("PCIE_GEN2_LINK_CAP_ADDR" in gsp) == gen2
+        nv = (src / "kernel-open/nvidia/nv.c").read_text()
+        assert ("nv_cmp170hx_retrain_gen2" in nv) == gen2
 
 
 @contextmanager
-def patched_source(version, p2p):
+def patched_source(version, p2p, gen2=True):
     assert shutil.which("patch"), "GNU patch is not installed"
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(["tar", "-xzf", str(tarball(version)), "-C", tmp], check=True)
         src = pathlib.Path(tmp, "open-gpu-kernel-modules-" + version)
         assert src.is_dir(), os.listdir(tmp)
-        for name in repo.patch_order(p2p=p2p):
-            r = subprocess.run(["patch", "--batch", "--forward", "-p1", "-i", str(PATCHES / name)], cwd=src,
+        for name in repo.patch_order(p2p=p2p, gen2=gen2):
+            r = subprocess.run(["patch", "--batch", "--forward", "--fuzz=0", "-p1", "-i", str(PATCHES / name)], cwd=src,
                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
             assert r.returncode == 0, "%s on %s:\n%s%s" % (name, version, r.stdout, r.stderr)
         yield src

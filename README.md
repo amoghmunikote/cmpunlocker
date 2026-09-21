@@ -51,11 +51,11 @@ Below are memory and performance results after applying the unlock:
 - Linux (x86-64)
 - Root access
 - NVIDIA CMP 170HX
-- **nvidia-open 610.xx.xx+ already installed** (libs + firmware)
+- **A supported nvidia-open version from `driver/VERSION` already installed** (matching libs + firmware)
 - Kernel headers matching the running kernel (`linux-headers-$(uname -r)` / `kernel-devel`)
 - Secure Boot disabled (patched modules are unsigned)
 - Network access on first install (downloads matching stock `open-gpu-kernel-modules` sources)
-- Python 3 (used at build time to select 8GB/10GB geometry)
+- Python 3 and PyYAML (`python3-yaml` on Ubuntu)
 
 ---
 
@@ -93,6 +93,26 @@ sudo ./install.sh --p2p --no-passthrough --no-iommu
 Cold boot again and verify actual peer transfers. `--no-iommu` leaves existing
 IOMMU settings unchanged. See [the P2P guide](docs/P2P.md) for the Ubuntu 24 /
 EPYC three-card trial, kernel prerequisites, content test and rollback.
+
+If the host cannot allocate full BAR1, an alternative from asm64-hooligan's fork
+is available as `--p2p=mailbox`. It uses the stock small BAR1; it is experimental
+and needs the same real-transfer checks. The two transports are mutually exclusive.
+
+### Updates, Gen2 recovery and tuning
+
+Kernel/header updates automatically rebuild the saved driver configuration on
+Ubuntu. NVIDIA packages are held at their installed versions, preserving any
+holds you already set. Use `--no-persist` / `--no-pin` to opt out. See
+[maintenance and recovery](docs/PERSISTENCE.md); custom Linux PCI patches still
+need separate maintenance.
+
+`--no-gen2` disables both driver retrain paths, forced link-speed options and the
+early boot retrain service. It is a diagnostic fallback if links disappear during
+initialization. `--no-gen2-service` disables only the service.
+
+The Akumaburn HBM privilege-mask improvements are preserved. Use
+[170tune for overclocking](docs/OVERCLOCKING.md); this driver leaves clocks at
+their VBIOS defaults so 170tune can establish and qualify a per-card baseline.
 
 ## What Gets Unlocked
 

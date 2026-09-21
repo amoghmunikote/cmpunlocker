@@ -41,6 +41,8 @@ LOG_FILE="${LOG_DIR}/remove_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee -a "${LOG_FILE}") 2>&1
 
 step "Stopping cmpunlocker service and PCIe/IOMMU helpers"
+info "Removing automatic rebuilds and cmpunlocker's package holds"
+python3 "${SCRIPT_DIR}/persist/manage.py" uninstall
 if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
     systemctl stop "${SERVICE_NAME}" || true
     ok "Service stopped"
@@ -154,6 +156,7 @@ for kernel in "${kernels[@]}"; do
     depmod -a "${kernel}" 2>/dev/null || true
     restore_stock_modules "${kernel}"
 done
+sync
 
 info "Rebuilding initramfs so stock modules are packed again..."
 for kernel in "${kernels[@]}"; do

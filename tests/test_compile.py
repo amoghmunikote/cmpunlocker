@@ -45,11 +45,12 @@ def test_passthrough_module_builds(tmp_path):
 @pytest.mark.skipif(sys.platform != "linux" and not os.environ.get("CMPUNLOCKER_TEST_CC"),
                     reason="requires a Linux x86-64 compiler (or CMPUNLOCKER_TEST_CC)")
 @pytest.mark.parametrize("version", repo.versions())
-def test_p2p_resource_manager_sources_compile(version):
+@pytest.mark.parametrize("mode,gen2", [("bar1", True), ("mailbox", False)])
+def test_p2p_resource_manager_sources_compile(version, mode, gen2):
     compiler = os.environ.get("CMPUNLOCKER_TEST_CC", "cc")
     objects = ["gpu", "kern_bus", "kernel_bif", "kern_bus_gp100", "kern_bus_gm107",
-               "nv_gpu_ops", "p2p_caps", "kernel_gsp"]
-    with patched_source(version, p2p=True) as src:
+               "nv_gpu_ops", "p2p_caps", "kernel_gsp", "mem_scrub", "kern_bus_gm200"]
+    with patched_source(version, p2p=mode, gen2=gen2) as src:
         r = subprocess.run([
             "make", "-C", str(src / "src/nvidia"), "-j2",
             "TARGET_OS=Linux", "TARGET_ARCH=x86_64", "CC=" + compiler,

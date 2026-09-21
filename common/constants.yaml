@@ -124,6 +124,10 @@ unlocks:
     patch: ce-scrub-workarounds.patch
     registers: {}
 
+  cmp_scrub_timeout:
+    patch: cmp-scrub-timeout.patch
+    registers: {}
+
   booter_verify:
     patch: booter-verify.patch
     registers: {}
@@ -147,3 +151,8 @@ unlocks:
   p2p_read_cap:
     patch: p2p-read-cap.patch
     registers: {}
+
+  p2p_mailbox:
+    patch: p2p-mailbox.patch
+    registers:
+      trap31_plm: { addr: "0x0012277c", value: "0xffffffff" }

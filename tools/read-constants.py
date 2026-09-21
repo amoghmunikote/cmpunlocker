@@ -31,7 +31,7 @@ def present(blob_lower, value):
 
 def read_patch_order(build_sh):
     text = io.open(build_sh, encoding="utf-8").read()
-    arrays = re.findall(r"^(?:P2P_)?PATCH_ORDER=\(\n(.*?)\n\)", text, re.S | re.M)
+    arrays = re.findall(r"^(?:[A-Z0-9]+_)*PATCH_ORDER=\(\n(.*?)\n\)", text, re.S | re.M)
     if not arrays:
         sys.exit("error: PATCH_ORDER not found in %s" % build_sh)
     return [line.strip() for array in arrays for line in array.splitlines() if line.strip()]

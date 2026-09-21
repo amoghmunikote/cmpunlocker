@@ -11,7 +11,8 @@ SRC_NAME="open-gpu-kernel-modules-${VERSION}"
 SRC_DIR="${BUILD_ROOT}/${SRC_NAME}"
 TARBALL="${BUILD_ROOT}/${SRC_NAME}.tar.gz"
 TARBALL_URL="https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/${VERSION}.tar.gz"
-KVER="$(uname -r)"
+KVER="${CMPUNLOCKER_KVER:-$(uname -r)}"
+[[ "${KVER}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._+-]*$ ]] || { echo "Invalid kernel version" >&2; exit 1; }
 KSRC="/lib/modules/${KVER}/build"
 INSTALL_MOD_DIR="/lib/modules/${KVER}/updates/cmpunlocker"
 
@@ -51,25 +52,43 @@ PATCH_ORDER=(
     late-pma.patch
     bar0-pramin-clamp.patch
     ce-scrub-workarounds.patch
+    cmp-scrub-timeout.patch
     persistent-sw-state.patch
-    pcie-gen2.patch
-    pcie-gen2-probe-retrain.patch
     name-string.patch
     bar1-resize-unlock.patch
     cmp-sku-mask.patch
 )
-P2P_PATCH_ORDER=(
+GEN2_PATCH_ORDER=(
+    pcie-gen2.patch
+    pcie-gen2-probe-retrain.patch
+)
+P2P_COMMON_PATCH_ORDER=(
     p2p-caps.patch
+)
+P2P_BAR1_PATCH_ORDER=(
     p2p-bar1.patch
     p2p-skip-mailbox.patch
     p2p-read-cap.patch
 )
-ENABLE_P2P="${CMPUNLOCKER_ENABLE_P2P:-0}"
-case "${ENABLE_P2P}" in
-    0) info "P2P overrides disabled" ;;
-    1) PATCH_ORDER+=("${P2P_PATCH_ORDER[@]}"); info "Enabling experimental BAR1 P2P" ;;
-    *) die "CMPUNLOCKER_ENABLE_P2P must be 0 or 1" ;;
+P2P_MAILBOX_PATCH_ORDER=(
+    p2p-mailbox.patch
+)
+P2P_MODE="${CMPUNLOCKER_P2P_MODE:-${CMPUNLOCKER_ENABLE_P2P:-off}}"
+DISABLE_GEN2="${CMPUNLOCKER_DISABLE_GEN2:-0}"
+case "${DISABLE_GEN2}" in
+    0) PATCH_ORDER+=("${GEN2_PATCH_ORDER[@]}") ;;
+    1) info "Gen2 retraining disabled; preserving firmware link speed" ;;
+    *) die "CMPUNLOCKER_DISABLE_GEN2 must be 0 or 1" ;;
 esac
+case "${P2P_MODE}" in
+    0|off) P2P_MODE=off; info "P2P overrides disabled" ;;
+    1|bar1)
+        P2P_MODE=bar1
+        PATCH_ORDER+=("${P2P_COMMON_PATCH_ORDER[@]}" "${P2P_BAR1_PATCH_ORDER[@]}") ;;
+    mailbox) PATCH_ORDER+=("${P2P_COMMON_PATCH_ORDER[@]}" "${P2P_MAILBOX_PATCH_ORDER[@]}") ;;
+    *) die "CMPUNLOCKER_P2P_MODE must be off, bar1 or mailbox" ;;
+esac
+info "P2P transport: ${P2P_MODE}"
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
     p="${PATCH_DIR}/${name}"
@@ -90,7 +109,7 @@ CONSTANTS="${SCRIPT_DIR}/../common/constants.yaml"
 CONSTANTS_ENV="$(python3 "${SCRIPT_DIR}/../tools/read-constants.py" "${CONSTANTS}" "${PATCH_DIR}" "${SCRIPT_DIR}/build.sh" "${PROFILE}")" || die "common/constants.yaml rejected (see error above)"
 eval "${CONSTANTS_ENV}"
 
-BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:p2p=${ENABLE_P2P}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
+BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:p2p=${P2P_MODE}:no-gen2=${DISABLE_GEN2}:${PATCH_HASH}:$(cat "${SCRIPT_DIR}/build.sh" "${CONSTANTS}" "${SCRIPT_DIR}/../tools/module-options.sh" | sha256sum | cut -d' ' -f1)"
 
 mkdir -p "${BUILD_ROOT}"
 
@@ -123,7 +142,7 @@ else
     cd "${SRC_DIR}"
     for i in "${!PATCH_ORDER[@]}"; do
         info "  ${PATCH_ORDER[$i]}"
-        patch --batch --forward -p1 < "${PATCH_FILES[$i]}"
+        patch --batch --forward --fuzz=0 -p1 < "${PATCH_FILES[$i]}"
     done
     ok "All patches applied"
 
@@ -181,17 +200,6 @@ PY
 fi
 
 cd "${SRC_DIR}"
-mkdir -p "${INSTALL_MOD_DIR}"
-printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
-printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
-printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
-if [[ -n "${CMPUNLOCKER_GPU_INVENTORY:-}" ]]; then
-    printf '%s\n' "${CMPUNLOCKER_GPU_INVENTORY}" > "${INSTALL_MOD_DIR}/gpu_inventory"
-    ok "Wrote gpu_inventory ($(echo "${CMPUNLOCKER_GPU_INVENTORY}" | grep -c . || true) GPU(s))"
-else
-    : > "${INSTALL_MOD_DIR}/gpu_inventory"
-fi
-
 info "Building modules for kernel ${KVER}..."
 find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
 if [[ "${SKIP_PREP}" -eq 0 ]]; then
@@ -218,7 +226,7 @@ mapfile -t KO_FILES < <(find "${SRC_DIR}" -type f \( \
     -name 'nvidia.ko' -o -name 'nvidia-modeset.ko' -o -name 'nvidia-uvm.ko' \
     -o -name 'nvidia-drm.ko' -o -name 'nvidia-peermem.ko' \) \
     ! -path '*/conftest/*' | sort -u)
-[[ ${#KO_FILES[@]} -gt 0 ]] || die "No built nvidia*.ko found"
+[[ -f "${SRC_DIR}/kernel-open/nvidia.ko" ]] || die "Core nvidia.ko was not built"
 
 for ko in "${KO_FILES[@]}"; do
     base="$(basename "${ko}")"
@@ -226,11 +234,30 @@ for ko in "${KO_FILES[@]}"; do
     ok "Installed ${base}"
 done
 
-printf '%s\n' "${ENABLE_P2P}" > "${INSTALL_MOD_DIR}/p2p_enabled"
+if [[ "${CMPUNLOCKER_BUILD_PASSTHROUGH:-0}" == 1 ]]; then
+    PT_BUILD="${BUILD_ROOT}/passthrough-${KVER}"
+    mkdir -p "${PT_BUILD}"
+    cp "${SCRIPT_DIR}/passthrough/Makefile" "${SCRIPT_DIR}/passthrough/cmp_no_bus_reset.c" "${PT_BUILD}/"
+    make -C "${PT_BUILD}" KVER="${KVER}"
+    install -m 0644 "${PT_BUILD}/cmp_no_bus_reset.ko" "${INSTALL_MOD_DIR}/cmp_no_bus_reset.ko"
+fi
+
+printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
+printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
+printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
+printf '%s\n' "${CMPUNLOCKER_GPU_INVENTORY:-}" > "${INSTALL_MOD_DIR}/gpu_inventory"
+printf '%s\n' "${P2P_MODE}" > "${INSTALL_MOD_DIR}/p2p_mode"
+printf '%s\n' "${DISABLE_GEN2}" > "${INSTALL_MOD_DIR}/gen2_disabled"
+[[ "${P2P_MODE}" == off ]] && enabled=0 || enabled=1
+printf '%s\n' "${enabled}" > "${INSTALL_MOD_DIR}/p2p_enabled"
 info "Configuring NVIDIA module options before rebuilding initramfs"
-bash "${SCRIPT_DIR}/../tools/module-options.sh" "${ENABLE_P2P}" > /etc/modprobe.d/cmp-pcie-gen2.conf
+mkdir -p /etc/modprobe.d /etc/depmod.d
+bash "${SCRIPT_DIR}/../tools/module-options.sh" "${P2P_MODE}" "${DISABLE_GEN2}" > /etc/modprobe.d/cmp-pcie-gen2.conf
+install -m 0644 "${SCRIPT_DIR}/../persist/depmod-cmpunlocker.conf" /etc/depmod.d/cmpunlocker.conf
+install -m 0644 "${SCRIPT_DIR}/../persist/modprobe-cmpunlocker.conf" /etc/modprobe.d/cmpunlocker.conf
 
 depmod -a "${KVER}"
+sync
 ok "depmod complete"
 rebuild_initramfs() {
     if command -v update-initramfs &>/dev/null; then
@@ -256,13 +283,14 @@ rebuild_initramfs() {
 }
 
 rebuild_initramfs || die "Modules installed, but initramfs was not rebuilt; fix this before rebooting"
-resolved="$(modprobe -n -v nvidia 2>/dev/null | awk '/insmod/ {print $2; exit}' || true)"
+resolved="$(modinfo -n -k "${KVER}" nvidia 2>/dev/null || true)"
 if [[ -n "${resolved}" ]]; then
     info "modprobe will load: ${resolved}"
     if [[ "${resolved}" != *"/updates/cmpunlocker/"* ]]; then
-        warn "Resolved nvidia.ko is not under updates/cmpunlocker/"
+        die "Resolved nvidia.ko is not under updates/cmpunlocker/ for ${KVER}"
     fi
 fi
+[[ -n "${resolved}" ]] || die "Cannot resolve nvidia.ko for ${KVER}"
 echo ""
 ok "Modules and boot options installed. The running driver has not been reloaded."
 info "Power off and power on to activate: sudo shutdown -h now"

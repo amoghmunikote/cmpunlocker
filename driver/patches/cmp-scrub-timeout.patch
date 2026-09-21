@@ -1,0 +1,52 @@
+Adapted from asm64-hooligan/cmpunlocker c0cecdd; scope the 25s timeout to CMP only.
+
+--- a/src/nvidia/src/kernel/gpu/mem_mgr/mem_scrub.c
++++ b/src/nvidia/src/kernel/gpu/mem_mgr/mem_scrub.c
+@@ -275,7 +275,14 @@
+     if (!API_GPU_IN_RESET_SANITY_CHECK(pGpu))
+     {
+         RMTIMEOUT     timeout;
+-        gpuSetTimeout(pGpu, GPU_TIMEOUT_DEFAULT, &timeout, 0);
++        gpuSetTimeout(pGpu,
++                      ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2U ||
++                       (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082U)
++                          ? 25000000 : GPU_TIMEOUT_DEFAULT,
++                      &timeout,
++                      ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2U ||
++                       (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082U)
++                          ? GPU_TIMEOUT_FLAGS_OSTIMER : 0);
+ 
+         while (_isScrubWorkPending(pScrubber))
+         {
+@@ -872,7 +879,14 @@
+     if (itemsToSave == 0)
+         goto done;
+ 
+-    gpuSetTimeout(pGpu, GPU_TIMEOUT_DEFAULT, &timeout, 0);
++    gpuSetTimeout(pGpu,
++                      ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2U ||
++                       (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082U)
++                          ? 25000000 : GPU_TIMEOUT_DEFAULT,
++                      &timeout,
++                      ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2U ||
++                       (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082U)
++                          ? GPU_TIMEOUT_FLAGS_OSTIMER : 0);
+ 
+     while (_scrubCheckProgress(pScrubber) < (pScrubber->lastSeenIdByClient + itemsToSave))
+     {
+@@ -929,7 +943,14 @@
+         return NV_OK;
+     }
+ 
+-    gpuSetTimeout(pGpu, GPU_TIMEOUT_DEFAULT, &timeout, 0);
++    gpuSetTimeout(pGpu,
++                      ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2U ||
++                       (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082U)
++                          ? 25000000 : GPU_TIMEOUT_DEFAULT,
++                      &timeout,
++                      ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2U ||
++                       (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082U)
++                          ? GPU_TIMEOUT_FLAGS_OSTIMER : 0);
+ 
+     // Loop will break out, when the semaphore is equal to payload, or times out
+     while (_scrubCheckProgress(pScrubber) < idToWait)
