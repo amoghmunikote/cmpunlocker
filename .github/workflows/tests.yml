@@ -17,6 +17,6 @@ jobs:
           restore-keys: open-gpu-kernel-modules-
       - run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck patch python3-pytest
+          sudo apt-get install -y shellcheck patch python3-pytest python3-yaml
           sudo apt-get install -y "linux-headers-$(uname -r)" || sudo apt-get install -y linux-headers-generic
       - run: python3 -m pytest -v

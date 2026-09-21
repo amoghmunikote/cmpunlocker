@@ -20,7 +20,7 @@ if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     echo "  - Removes cmpretrain service / modprobe Gen2 helpers"
     echo "  - Removes VM passthrough helpers (service, udev rule, vfio modprobe conf)"
     echo "  - Rebuilds the stock nvidia DKMS modules that install.sh removed"
-    echo "  - Reloads stock NVIDIA modules (brief display interruption)"
+    echo "  - Activates stock NVIDIA modules after the next cold boot"
     echo "  - Restores the pre-install kernel command line (reverts IOMMU changes)"
     echo ""
     echo "Run: sudo ./remove.sh --yes"
@@ -184,55 +184,14 @@ else
     warn "${INSTALL_DIR} not found (ok for module-only installs)"
 fi
 
-step "Reloading stock NVIDIA driver"
-nvidia_was_loaded=0
-if grep -q '^nvidia' /proc/modules; then
-    nvidia_was_loaded=1
-    warn "Unloading NVIDIA modules (display may flicker)"
-    for svc in gdm3 sddm lightdm display-manager; do
-        systemctl stop "${svc}" 2>/dev/null || true
-    done
-    systemctl stop nvidia-persistenced 2>/dev/null || true
-    killall -9 Xorg Xwayland nvidia-persistenced 2>/dev/null || true
-    sleep 1
-
-    for mod in nvidia_drm nvidia_uvm nvidia_modeset nvidia; do
-        modprobe -r "${mod}" 2>/dev/null || true
-    done
-    sleep 1
-
-    if grep -q '^nvidia' /proc/modules; then
-        for mod in nvidia_uvm nvidia_drm nvidia_modeset nvidia; do
-            rmmod -f "${mod}" 2>/dev/null || true
-        done
-    fi
-else
-    warn "NVIDIA modules not loaded"
-fi
-
-if modprobe nvidia 2>/dev/null; then
-    modprobe nvidia-modeset 2>/dev/null || true
-    modprobe nvidia-uvm 2>/dev/null || true
-    modprobe nvidia-drm 2>/dev/null || true
-    ok "Stock NVIDIA driver loaded: $(modinfo -n nvidia 2>/dev/null || true)"
-else
-    warn "Could not load NVIDIA driver — reboot to finish cleanup"
-fi
-
-if (( nvidia_was_loaded )); then
-    for svc in gdm3 sddm lightdm display-manager; do
-        if systemctl is-enabled --quiet "${svc}" 2>/dev/null; then
-            systemctl start "${svc}" 2>/dev/null || true
-            break
-        fi
-    done
-fi
+step "Leaving the running NVIDIA driver loaded until cold boot"
+info "Live reloads can hang CMP systems. Stock modules will load at the next boot."
 
 step "Done"
 banner
 echo "cmpunlocker has been removed from system."
 echo "Log saved to: ${LOG_FILE}"
 echo ""
-echo "If the GPU or display is not working, reboot once:"
-echo -e "  ${CYAN}sudo reboot${NC}"
+echo "Power off and power on to finish removal:"
+echo -e "  ${CYAN}sudo shutdown -h now${NC}"
 echo ""

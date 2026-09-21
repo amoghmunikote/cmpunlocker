@@ -12,6 +12,7 @@ PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
 CONFIGURE_PASSTHROUGH=1
+ENABLE_P2P=0
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
@@ -19,13 +20,17 @@ for arg in "$@"; do
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         --no-passthrough) CONFIGURE_PASSTHROUGH=0 ;;
+        --p2p) ENABLE_P2P=1 ;;
         -h|--help)
             cat <<'EOF'
 Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
-                        [--no-passthrough]
+                        [--no-passthrough] [--p2p]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
+  --p2p          Enable experimental BAR1 P2P and static BAR1 mappings.
+                  Requires a full BAR1 on each GPU and a working PCIe peer route.
+                  Verify actual peer reads/writes after a cold boot; see docs/P2P.md.
   --no-iommu      Do not touch the kernel command line (leave IOMMU settings alone)
   --no-gen2-service
                   Do not install the early-boot PCIe Gen2 retrain service
@@ -217,6 +222,10 @@ ok "NVIDIA driver ${detected} is supported"
 [[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). Install linux-headers-$(uname -r) or kernel-devel."
 ok "Kernel headers present for $(uname -r)"
 
+if (( ENABLE_P2P == 1 )); then
+    info "Checking BAR1 allocation before enabling P2P"
+    python3 "${SCRIPT_DIR}/tools/check-bar1.py" || die "BAR1 allocation is not ready for --p2p. Install without --p2p first, cold boot, and follow docs/P2P.md."
+fi
 info "Removing conflicting NVIDIA DKMS modules (not all systems have any)"
 for ver in "${SUPPORTED_VERSIONS[@]}"; do
     dkms remove nvidia/"${ver}" --all 2>/dev/null || true
@@ -229,6 +238,7 @@ chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
 CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
 CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
+CMPUNLOCKER_ENABLE_P2P="${ENABLE_P2P}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
@@ -246,11 +256,7 @@ else
     warn "--no-passthrough given; cards are not prepared for VM passthrough"
 fi
 
-info "Configuring PCIe Gen2"
-cat > /etc/modprobe.d/cmp-pcie-gen2.conf <<'EOF'
-options nvidia NVreg_RegistryDwords="RmForceEnableGen2=1;RMPcieLinkSpeed=0x1"
-EOF
-ok "Wrote /etc/modprobe.d/cmp-pcie-gen2.conf"
+info "PCIe Gen2 and optional P2P module options were installed with the driver"
 
 for legacy_unit in cmpretrain.service cmp-gen2-retrain.service; do
     systemctl disable --now "${legacy_unit}" 2>/dev/null || true
@@ -409,6 +415,10 @@ banner
 echo "cmpunlocker install finished!"
 echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
 echo "Passthrough: ${PASSTHROUGH_STATUS}"
+if (( ENABLE_P2P == 1 )); then
+    echo "P2P: experimental BAR1 path enabled; verify with tools/p2p-test.cu after cold boot"
+    echo "Full BAR1 allocation may require the separate kernel-patches/; see docs/P2P.md"
+fi
 if [[ -n "${IOMMU_PARAMS}" && "${IOMMU_STATUS}" != "skipped" ]]; then
     echo "IOMMU:   ${IOMMU_PARAMS} (${IOMMU_STATUS})"
 else

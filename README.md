@@ -76,6 +76,24 @@ sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 
 Then perform a reboot.
 
+### Optional GPU-to-GPU P2P
+
+This checkout is based on `akumaburn/cmpunlocker2` with an optional port of
+Bayley's Static BAR1 P2P path, also used by Satspace's verified result. The
+64 GiB memory unlock works independently of P2P.
+
+After the memory unlock and a cold boot, verify full BAR1 allocation on every
+card before enabling P2P:
+
+```bash
+python3 tools/check-bar1.py
+sudo ./install.sh --p2p --no-passthrough --no-iommu
+```
+
+Cold boot again and verify actual peer transfers. `--no-iommu` leaves existing
+IOMMU settings unchanged. See [the P2P guide](docs/P2P.md) for the Ubuntu 24 /
+EPYC three-card trial, kernel prerequisites, content test and rollback.
+
 ## What Gets Unlocked
 
 <table>

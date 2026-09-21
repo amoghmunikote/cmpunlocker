@@ -2,7 +2,7 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SKIP_DIRS = {".git", ".build", "__pycache__"}
+SKIP_DIRS = {".git", ".build", ".venv", "__pycache__"}
 
 
 def _files(suffix):
@@ -27,8 +27,13 @@ def versions():
     return [v for v in lines if re.fullmatch(r"\d+\.\d+\.\d+", v)]
 
 
-def patch_order():
+def patch_order(p2p=False):
     text = (ROOT / "driver" / "build.sh").read_text()
     m = re.search(r"PATCH_ORDER=\(\n(.*?)\n\)", text, re.S)
     assert m, "PATCH_ORDER not found in driver/build.sh"
-    return m.group(1).split()
+    order = m.group(1).split()
+    if p2p:
+        m = re.search(r"P2P_PATCH_ORDER=\(\n(.*?)\n\)", text, re.S)
+        assert m, "P2P_PATCH_ORDER not found in driver/build.sh"
+        order += m.group(1).split()
+    return order

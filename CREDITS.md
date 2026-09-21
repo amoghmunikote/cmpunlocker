@@ -5,3 +5,6 @@ Thanks to:
 |---|---|
 | [asm64-hooligan](https://github.com/asm64-hooligan/) | Full BAR1 size (64GB) |
 | [lesj0610](https://github.com/lesj0610/) | GPU profiling |
+| [akumaburn](https://github.com/akumaburn/cmpunlocker2) | Base fork: HBM PLL/memory PLMs and FBPA diagnostics |
+| [bayley](https://github.com/bayley/cmpunlocker) | Static BAR1 P2P transport, mailbox/read-cap fixes, early BAR1 kernel patches |
+| [satspace-cpu](https://github.com/satspace-cpu/cmp170hx-linux-p2p) | Additional content-verified Static BAR1 evidence and topology limits |

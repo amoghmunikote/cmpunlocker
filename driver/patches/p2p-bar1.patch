@@ -1,0 +1,229 @@
+Ported from bayley/cmpunlocker 5a7bb4b7e5056306fe49e8b824787659abb19914
+0011-p2p-bar1.patch, with HAL selection and PTE rewrites scoped to CMP GPUs.
+Applied only for --p2p. See docs/P2P.md.
+
+--- a/src/nvidia/src/kernel/gpu/bus/kern_bus.c
++++ b/src/nvidia/src/kernel/gpu/bus/kern_bus.c
+@@ -58,6 +58,17 @@
+     if (IS_VIRTUAL_WITH_SRIOV(pGpu))
+     {
+         pKernelBus->bUsePhysicalBar2InitPagetable = NV_TRUE;
++    }
++
++    // CMP uses the existing BAR1 transport HALs to bypass its mailbox path.
++    if ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2 ||
++        (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082)
++    {
++        pKernelBus->__kbusGetBar1P2PDmaInfo__ = &kbusGetBar1P2PDmaInfo_GH100;
++        pKernelBus->__kbusCreateP2PMappingForBar1P2P__ = &kbusCreateP2PMappingForBar1P2P_GH100;
++        pKernelBus->__kbusRemoveP2PMappingForBar1P2P__ = &kbusRemoveP2PMappingForBar1P2P_GH100;
++        pKernelBus->__kbusHasPcieBar1P2PMapping__ = &kbusHasPcieBar1P2PMapping_GH100;
++        pKernelBus->__kbusIsPcieBar1P2PMappingSupported__ = &kbusIsPcieBar1P2PMappingSupported_GH100;
+     }
+ 
+     // allocate HAL private info block
+--- a/src/nvidia/src/kernel/gpu/bif/kernel_bif.c
++++ b/src/nvidia/src/kernel/gpu/bif/kernel_bif.c
+@@ -1126,9 +1126,12 @@
+ )
+ {
+     NvU32 data32;
+-
+-    // P2P Override
+-    pKernelBif->p2pOverride = BIF_P2P_NOT_OVERRIDEN;
++    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
++    NvBool bCmp170hx = (devId == 0x20C2 || devId == 0x2082);
++
++    // P2P Override: on CMP 170HX/220HX default to both reads+writes enabled
++    // so BAR1 P2P works out of the box (cmpunlocker P2P unlock)
++    pKernelBif->p2pOverride = bCmp170hx ? 0x11 : BIF_P2P_NOT_OVERRIDEN;
+     if (osReadRegistryDword(pGpu, NV_REG_STR_CL_FORCE_P2P, &data32) == NV_OK)
+     {
+         pKernelBif->p2pOverride = data32;
+@@ -1144,7 +1147,10 @@
+         pKernelBif->forceP2PType = data32;
+     }
+ 
+-    pKernelBif->pcieP2PType = NV_REG_STR_RM_PCIEP2P_TYPE_DEFAULT;
++    // cmpunlocker P2P: force BAR1 P2P as the default connection type on
++    // CMP 170HX/220HX instead of NV_REG_STR_RM_PCIEP2P_TYPE_DEFAULT
++    pKernelBif->pcieP2PType = bCmp170hx ? NV_REG_STR_RM_PCIEP2P_TYPE_BAR1
++                                         : NV_REG_STR_RM_PCIEP2P_TYPE_DEFAULT;
+     if (osReadRegistryDword(pGpu, NV_REG_STR_RM_PCIEP2P_TYPE, &data32) == NV_OK)
+     {
+         pKernelBif->pcieP2PType = data32;
+--- a/src/nvidia/src/kernel/gpu/bus/arch/pascal/kern_bus_gp100.c
++++ b/src/nvidia/src/kernel/gpu/bus/arch/pascal/kern_bus_gp100.c
+@@ -63,6 +63,13 @@
+         FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _NVLINK_INDIRECT, attributes))
+     {
+         return kbusCreateP2PMappingForNvlink_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, peer0, peer1, attributes);
++    }
++
++    // cmpunlocker P2P: BAR1 P2P branch (attribute set from pKernelBif->pcieP2PType,
++    // which is only defaulted to BAR1 on CMP 170HX/220HX, see kernel_bif.c)
++    if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE_BAR1, attributes))
++    {
++        return kbusCreateP2PMappingForBar1P2P_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, attributes);
+     }
+ 
+     if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE, attributes))
+@@ -641,6 +648,12 @@
+         FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _NVLINK_INDIRECT, attributes))
+     {
+         return kbusRemoveP2PMappingForNvlink_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, peer0, peer1, attributes);
++    }
++
++    // cmpunlocker P2P: BAR1 P2P branch, see kbusCreateP2PMapping_GP100 above
++    if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE_BAR1, attributes))
++    {
++        return kbusRemoveP2PMappingForBar1P2P_HAL(pGpu0, pKernelBus0, pGpu1, pKernelBus1, attributes);
+     }
+ 
+     if (FLD_TEST_DRF(_P2PAPI, _ATTRIBUTES, _CONNECTION_TYPE, _PCIE, attributes))
+--- a/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
++++ b/src/nvidia/src/kernel/rmapi/nv_gpu_ops.c
+@@ -3967,7 +3967,8 @@
+     NvBool         isPeerSupported,
+     NvBool         isBar1P2PSupported,
+     NvU32          peerId,
+-    gpuExternalMappingInfo *pGpuExternalMappingInfo
++    gpuExternalMappingInfo *pGpuExternalMappingInfo,
++    RmPhysAddr     bar1BusAddr
+ )
+ {
+     NV_STATUS               status              = NV_OK;
+@@ -3998,6 +3999,9 @@
+     NvBool         *isPLCable = NULL;
+     NvU64          *guestPhysicalAddress = NULL;
+     NvU64          mappingPageSize = pGpuExternalMappingInfo->mappingPageSize;
++    NvU32          cmpDevId = pMappingGpu->idInfo.PCIDeviceID >> 16;
++    NvBool         isCmpBar1P2P = isBar1P2PSupported &&
++                                 (cmpDevId == 0x20C2 || cmpDevId == 0x2082);
+ 
+     NV_ASSERT(!memdescHasSubDeviceMemDescs(pMemDesc));
+ 
+@@ -4124,7 +4128,14 @@
+         NvU32 ptePcfHw  = 0;
+ 
+          nvFieldSetBool(&pPteFmt->fldValid, NV_TRUE, pte.v8);
+-         gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++         if ((aperture == GMMU_APERTURE_PEER) && isCmpBar1P2P)
++         {
++             gmmuFieldSetAperture(&pPteFmt->fldAperture, GMMU_APERTURE_SYS_COH, pte.v8);
++         }
++         else
++         {
++             gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++         }
+          nvFieldSet32(&pPteFmt->fldKind, kind, pte.v8);
+ 
+          ptePcfSw |= vol         ? (1 << SW_MMU_PCF_UNCACHED_IDX) : 0;
+@@ -4168,7 +4179,14 @@
+         if (nvFieldIsValid32(&pPteFmt->fldAtomicDisable.desc))
+             nvFieldSetBool(&pPteFmt->fldAtomicDisable, !atomic, pte.v8);
+ 
+-        gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++        if ((aperture == GMMU_APERTURE_PEER) && isCmpBar1P2P)
++        {
++            gmmuFieldSetAperture(&pPteFmt->fldAperture, GMMU_APERTURE_SYS_NONCOH, pte.v8);
++        }
++        else
++        {
++            gmmuFieldSetAperture(&pPteFmt->fldAperture, aperture, pte.v8);
++        }
+ 
+         if (!isCompressedKind)
+         {
+@@ -4179,7 +4197,12 @@
+         }
+     }
+ 
+-    if (aperture == GMMU_APERTURE_PEER)
++    if ((aperture == GMMU_APERTURE_PEER) && isCmpBar1P2P)
++    {
++        fabricBaseAddress = bar1BusAddr;
++    }
++
++    if ((aperture == GMMU_APERTURE_PEER) && !isCmpBar1P2P)
+     {
+         nvFieldSet32(&pPteFmt->fldPeerIndex, peerId, pte.v8);
+ 
+@@ -4438,7 +4461,8 @@
+     NvBool      isPeerSupported,
+     NvBool      isBar1P2PSupported,
+     NvU32       peerId,
+-    UvmGpuExternalPhysAddrInfo *pGpuExternalPhysAddrInfo
++    UvmGpuExternalPhysAddrInfo *pGpuExternalPhysAddrInfo,
++    RmPhysAddr bar1BusAddr
+ )
+ {
+     NV_STATUS               status              = NV_OK;
+@@ -4452,6 +4476,9 @@
+     NvU64          allocSize;
+     NvU64         *physicalAddresses = NULL;
+     NvU64          mappingPageSize = pGpuExternalPhysAddrInfo->mappingPageSize;
++    NvU32          cmpDevId = pMappingGpu->idInfo.PCIDeviceID >> 16;
++    NvBool         isCmpBar1P2P = isBar1P2PSupported &&
++                                 (cmpDevId == 0x20C2 || cmpDevId == 0x2082);
+ 
+     NV_ASSERT(!memdescHasSubDeviceMemDescs(pMemDesc));
+ 
+@@ -4516,7 +4543,12 @@
+         return NV_ERR_BUFFER_TOO_SMALL;
+ 
+ 
+-    if (aperture == GMMU_APERTURE_PEER)
++    if ((aperture == GMMU_APERTURE_PEER) && isCmpBar1P2P)
++    {
++        fabricBaseAddress = bar1BusAddr;
++    }
++
++    if ((aperture == GMMU_APERTURE_PEER) && !isCmpBar1P2P)
+     {
+         //
+         // Any fabric memory descriptors are pre-encoded with the fabric base address
+@@ -4658,6 +4690,7 @@
+     Memory *pMemory = NULL;
+     PMEMORY_DESCRIPTOR pMemDesc = NULL;
+     OBJGPU *pMappingGpu = NULL;
++    RmPhysAddr bar1BusAddr = 0;
+     NvU32 peerId = 0;
+     NvBool isSliSupported = NV_FALSE;
+     NvBool isPeerSupported = NV_FALSE;
+@@ -4797,6 +4830,8 @@
+                                                        &peerId);
+             if (status != NV_OK)
+                 goto freeGpaMemdesc;
++
++            bar1BusAddr = gpumgrGetGpuPhysFbAddr(pAdjustedMemDesc->pGpu);
+         }
+ 
+         //
+@@ -4885,14 +4920,15 @@
+                                                 isPeerSupported,
+                                                 isBar1P2PSupported,
+                                                 peerId,
+-                                                pGpuExternalMappingInfo);
++                                                pGpuExternalMappingInfo,
++                                                bar1BusAddr);
+     }
+ 
+     if (pGpuExternalPhysAddrInfo != NULL)
+     {
+         status = nvGpuOpsBuildExternalAllocPhysAddrs(pVAS, vaSpace->device->session, pMappingGpu, pAdjustedMemDesc,
+                                                      pMemory, offset, size, isIndirectPeerSupported, isPeerSupported,
+-                                                     isBar1P2PSupported, peerId, pGpuExternalPhysAddrInfo);
++                                                     isBar1P2PSupported, peerId, pGpuExternalPhysAddrInfo, bar1BusAddr);
+     }
+ 
+ freeGpaMemdesc:
+@@ -11046,7 +11082,7 @@
+ 
+     status = nvGpuOpsBuildExternalAllocPtes(pVAS, vaSpace->device->session, pMappingGpu, pMemDesc, NULL,
+                                             offset, size, NV_FALSE, NV_FALSE,
+-                                            NV_FALSE, 0, pGpuExternalMappingInfo);
++                                            NV_FALSE, 0, pGpuExternalMappingInfo, 0);
+ 
+     _nvGpuOpsLocksRelease(&acquiredLocks);
+     threadStateFree(&threadState, THREAD_STATE_FLAGS_NONE);

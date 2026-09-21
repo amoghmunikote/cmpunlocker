@@ -4,10 +4,12 @@ import py_compile
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 import repo
+from test_patches import patched_source
 
 PY_FILES = repo.py_files()
 EMBEDDED = [s for s in repo.sh_files() if "<<'PY'" in s.read_text()]
@@ -26,6 +28,7 @@ def test_embedded_python_compiles(script):
         compile(block, "%s:PY%d" % (repo.rel(script), n), "exec")
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="requires Linux kernel headers")
 def test_passthrough_module_builds(tmp_path):
     builds = [b for b in pathlib.Path("/lib/modules").glob("*/build") if b.is_dir()]
     running = pathlib.Path("/lib/modules", os.uname().release, "build")
@@ -37,3 +40,19 @@ def test_passthrough_module_builds(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     assert (tmp_path / "cmp_no_bus_reset.ko").is_file()
+
+
+@pytest.mark.skipif(sys.platform != "linux" and not os.environ.get("CMPUNLOCKER_TEST_CC"),
+                    reason="requires a Linux x86-64 compiler (or CMPUNLOCKER_TEST_CC)")
+@pytest.mark.parametrize("version", repo.versions())
+def test_p2p_resource_manager_sources_compile(version):
+    compiler = os.environ.get("CMPUNLOCKER_TEST_CC", "cc")
+    objects = ["gpu", "kern_bus", "kernel_bif", "kern_bus_gp100", "kern_bus_gm107",
+               "nv_gpu_ops", "p2p_caps", "kernel_gsp"]
+    with patched_source(version, p2p=True) as src:
+        r = subprocess.run([
+            "make", "-C", str(src / "src/nvidia"), "-j2",
+            "TARGET_OS=Linux", "TARGET_ARCH=x86_64", "CC=" + compiler,
+            *["_out/Linux_x86_64/" + name + ".o" for name in objects],
+        ], capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr

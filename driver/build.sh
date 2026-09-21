@@ -58,6 +58,18 @@ PATCH_ORDER=(
     bar1-resize-unlock.patch
     cmp-sku-mask.patch
 )
+P2P_PATCH_ORDER=(
+    p2p-caps.patch
+    p2p-bar1.patch
+    p2p-skip-mailbox.patch
+    p2p-read-cap.patch
+)
+ENABLE_P2P="${CMPUNLOCKER_ENABLE_P2P:-0}"
+case "${ENABLE_P2P}" in
+    0) info "P2P overrides disabled" ;;
+    1) PATCH_ORDER+=("${P2P_PATCH_ORDER[@]}"); info "Enabling experimental BAR1 P2P" ;;
+    *) die "CMPUNLOCKER_ENABLE_P2P must be 0 or 1" ;;
+esac
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
     p="${PATCH_DIR}/${name}"
@@ -78,7 +90,7 @@ CONSTANTS="${SCRIPT_DIR}/../common/constants.yaml"
 CONSTANTS_ENV="$(python3 "${SCRIPT_DIR}/../tools/read-constants.py" "${CONSTANTS}" "${PATCH_DIR}" "${SCRIPT_DIR}/build.sh" "${PROFILE}")" || die "common/constants.yaml rejected (see error above)"
 eval "${CONSTANTS_ENV}"
 
-BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
+BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:p2p=${ENABLE_P2P}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
 
 mkdir -p "${BUILD_ROOT}"
 
@@ -111,7 +123,7 @@ else
     cd "${SRC_DIR}"
     for i in "${!PATCH_ORDER[@]}"; do
         info "  ${PATCH_ORDER[$i]}"
-        patch -p1 < "${PATCH_FILES[$i]}"
+        patch --batch --forward -p1 < "${PATCH_FILES[$i]}"
     done
     ok "All patches applied"
 
@@ -214,24 +226,28 @@ for ko in "${KO_FILES[@]}"; do
     ok "Installed ${base}"
 done
 
+printf '%s\n' "${ENABLE_P2P}" > "${INSTALL_MOD_DIR}/p2p_enabled"
+info "Configuring NVIDIA module options before rebuilding initramfs"
+bash "${SCRIPT_DIR}/../tools/module-options.sh" "${ENABLE_P2P}" > /etc/modprobe.d/cmp-pcie-gen2.conf
+
 depmod -a "${KVER}"
 ok "depmod complete"
 rebuild_initramfs() {
     if command -v update-initramfs &>/dev/null; then
         info "Rebuilding initramfs (update-initramfs)..."
-        update-initramfs -u -k "${KVER}"
+        update-initramfs -u -k "${KVER}" || return 1
         ok "initramfs rebuilt"
         return 0
     fi
     if command -v dracut &>/dev/null; then
         info "Rebuilding initramfs (dracut)..."
-        dracut --force --kver "${KVER}"
+        dracut --force --kver "${KVER}" || return 1
         ok "initramfs rebuilt"
         return 0
     fi
     if command -v mkinitcpio &>/dev/null; then
         info "Rebuilding initramfs (mkinitcpio)..."
-        mkinitcpio -P
+        mkinitcpio -P || return 1
         ok "initramfs rebuilt"
         return 0
     fi
@@ -239,7 +255,7 @@ rebuild_initramfs() {
     return 1
 }
 
-rebuild_initramfs || true
+rebuild_initramfs || die "Modules installed, but initramfs was not rebuilt; fix this before rebooting"
 resolved="$(modprobe -n -v nvidia 2>/dev/null | awk '/insmod/ {print $2; exit}' || true)"
 if [[ -n "${resolved}" ]]; then
     info "modprobe will load: ${resolved}"
@@ -247,41 +263,7 @@ if [[ -n "${resolved}" ]]; then
         warn "Resolved nvidia.ko is not under updates/cmpunlocker/"
     fi
 fi
-info "Attempting to unload NVIDIA modules..."
-systemctl stop nvidia-persistenced 2>/dev/null || true
-systemctl stop nvidia-fabricmanager 2>/dev/null || true
-reload_ok=0
-if grep -q '^nvidia' /proc/modules; then
-    for mod in nvidia_drm nvidia_uvm nvidia_modeset nvidia; do
-        modprobe -r "${mod}" 2>/dev/null || true
-    done
-    sleep 1
-fi
-
-if ! grep -q '^nvidia ' /proc/modules; then
-    if modprobe nvidia && modprobe nvidia-modeset; then
-        modprobe nvidia-uvm 2>/dev/null || true
-        modprobe nvidia-drm 2>/dev/null || true
-        reload_ok=1
-        ok "Patched NVIDIA modules loaded"
-        running_src="$(cat /sys/module/nvidia/srcversion 2>/dev/null || true)"
-        patched_src="$(modinfo -F srcversion "${INSTALL_MOD_DIR}/nvidia.ko" 2>/dev/null || true)"
-        if [[ -n "${running_src}" && -n "${patched_src}" && "${running_src}" != "${patched_src}" ]]; then
-            warn "Loaded nvidia srcversion (${running_src}) != patched (${patched_src})"
-            reload_ok=0
-        fi
-    else
-        warn "modprobe failed"
-    fi
-else
-    warn "Could not unload nvidia modules"
-fi
 echo ""
-if [[ "${reload_ok}" -eq 1 ]]; then
-    ok "Build and install finished. Verify with: nvidia-smi"
-    info "If memory shows stock size, do cold reboot."
-else
-    warn "Modules installed but running driver is still stock."
-    info "Perform cold reboot: shutdown -h now"
-fi
+ok "Modules and boot options installed. The running driver has not been reloaded."
+info "Power off and power on to activate: sudo shutdown -h now"
 echo ""

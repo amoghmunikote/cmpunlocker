@@ -1,0 +1,19 @@
+Ported from bayley/cmpunlocker 5a7bb4b7e5056306fe49e8b824787659abb19914
+0007-p2p-caps-hook.patch and cmpUnlockForceP2PCaps, inlined for this tree.
+Applied only for --p2p. See docs/P2P.md.
+
+--- a/src/nvidia/src/kernel/gpu/gpu.c
++++ b/src/nvidia/src/kernel/gpu/gpu.c
+@@ -2515,4 +2515,12 @@
+                              sizeof(NV2080_CTRL_INTERNAL_GET_PCIE_P2P_CAPS_PARAMS));
+     NV_ASSERT_OR_RETURN_VOID(status == NV_OK);
++
++    if ((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2 ||
++        (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082)
++    {
++        p2pCapsParams.p2pReadCapsStatus = NV0000_P2P_CAPS_STATUS_OK;
++        p2pCapsParams.p2pWriteCapsStatus = NV0000_P2P_CAPS_STATUS_OK;
++        NV_PRINTF(LEVEL_WARNING, "CMPUNLOCK_P2P: caps overridden; verify real peer transfers\n");
++    }
+ 
+     pGpu->pcieP2PReadCaps = p2pCapsParams.p2pReadCapsStatus;

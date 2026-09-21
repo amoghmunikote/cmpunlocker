@@ -1,0 +1,23 @@
+Ported from bayley/cmpunlocker 5a7bb4b7e5056306fe49e8b824787659abb19914
+0013-skip-mailbox-peer-preinit.patch, restricted to CMP BAR1 peers.
+Applied only for --p2p. See docs/P2P.md.
+
+--- a/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c
++++ b/src/nvidia/src/kernel/gpu/bus/arch/maxwell/kern_bus_gm107.c
+@@ -288,8 +288,15 @@
+ 
+         if (gpumgrGetGpuLinkCount(pGpu->gpuInstance) > 0)
+         {
++            KernelBif *pKernelBifP2P = GPU_GET_KERNEL_BIF(pGpu);
++            NvU32 cmpDevId = pGpu->idInfo.PCIDeviceID >> 16;
++            NvBool bCmpBar1P2P = (cmpDevId == 0x20C2 || cmpDevId == 0x2082) &&
++                (pKernelBifP2P != NULL) &&
++                (pKernelBifP2P->pcieP2PType == NV_REG_STR_RM_PCIEP2P_TYPE_BAR1);
++
++            // Mailbox peer IDs would prevent BAR1 P2P from being selected.
+             if (!kbusIsP2pInitialized(pKernelBus) &&
+-                !kbusIsP2pMailboxClientAllocated(pKernelBus))
++                !kbusIsP2pMailboxClientAllocated(pKernelBus) && !bCmpBar1P2P)
+             {
+                 _kbusInitP2P_GM107(pGpu, pKernelBus);
+             }

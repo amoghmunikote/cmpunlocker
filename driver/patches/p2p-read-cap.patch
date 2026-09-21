@@ -1,0 +1,23 @@
+Ported from bayley/cmpunlocker 5a7bb4b7e5056306fe49e8b824787659abb19914
+0015-bar1p2p-readcap-override.patch, rebased without disabled debug-patch context.
+Applied only for --p2p. See docs/P2P.md.
+
+--- a/src/nvidia/src/kernel/platform/p2p/p2p_caps.c
++++ b/src/nvidia/src/kernel/platform/p2p/p2p_caps.c
+@@ -669,6 +669,16 @@
+         NV_PRINTF(LEVEL_INFO, "Unrecognized CPU. Read Cap is disabled\n");
+     }
+ 
++    // The host whitelist misses working CMP topologies. This is an opt-in
++    // override, not proof that an untested host can route peer reads.
++    if (((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2 ||
++         (pGpu->idInfo.PCIDeviceID >> 16) == 0x2082) &&
++        *pP2PReadCapStatus != NV0000_P2P_CAPS_STATUS_OK)
++    {
++        NV_PRINTF(LEVEL_WARNING, "CMPUNLOCK_P2P: overriding host BAR1 read cap\n");
++        *pP2PReadCapStatus = NV0000_P2P_CAPS_STATUS_OK;
++    }
++
+     return NV_OK;
+ }
+ 

@@ -1,0 +1,41 @@
+PCI: size bridge windows for child alignment padding
+
+pbus_size_mem() accumulates the required window size with
+
+	size += max(r_size, align);
+
+which is correct only when a child's size is a multiple of its alignment.
+Every child must *start* at an aligned address, so a child whose size is not
+a multiple of its alignment leaves a gap before the next one. That gap is
+never budgeted, and the resulting window can be too small to place all the
+children even though the arithmetic says it fits.
+
+Seen on a Supermicro SYS-4028GR-TRT2 with four NVIDIA CMP 170HX behind one
+PLX switch, each with a 64GB BAR1 (64GB alignment) plus a 32MB BAR3, so each
+downstream port window is 64GB+32MB with 64GB alignment:
+
+  before: root port window 256GB + 128MB (exactly the sum of the children)
+          GPU0 BAR1 @ 0x21000000000, GPU1 @ 0x23000000000 (128GB apart)
+          GPU2, GPU3: BAR1 unassigned
+
+  after:  root port window 512GB
+          BAR1 @ 0x20000000000 / 0x22000000000 / 0x24000000000 / 0x26000000000
+          all four assigned
+
+Because each 64GB+32MB child must begin on a 64GB boundary it really occupies
+128GB, so four need 512GB while only 256GB was reserved. Two GPUs got a BAR1
+and two silently got none. The host bridge had 2TB free, so this was purely a
+sizing miscalculation, not address space exhaustion.
+
+Using ALIGN() instead of max() budgets the inter-child padding. The two are
+identical whenever r_size <= align, which covers every ordinary device BAR
+(where size == alignment), so this only changes the bridge windows that are
+currently mis-sized.
+
+Context rebased for Linux 6.8 and HWE sources; same sizing change.
+
+--- a/drivers/pci/setup-bus.c
++++ b/drivers/pci/setup-bus.c
+@@ -1061 +1061 @@
+-			size += max(r_size, align);
++			size += ALIGN(r_size, align);

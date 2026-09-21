@@ -131,3 +131,19 @@ unlocks:
   cmp-sku-mask:
     patch: cmp-sku-mask.patch
     registers: {}
+
+  p2p_caps:
+    patch: p2p-caps.patch
+    registers: {}
+
+  p2p_bar1:
+    patch: p2p-bar1.patch
+    registers: {}
+
+  p2p_skip_mailbox:
+    patch: p2p-skip-mailbox.patch
+    registers: {}
+
+  p2p_read_cap:
+    patch: p2p-read-cap.patch
+    registers: {}

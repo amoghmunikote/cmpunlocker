@@ -1,0 +1,142 @@
+PCI: quirk: program CMP 170HX BAR1 REBAR to 64GB before enumeration
+
+The NVIDIA CMP 170HX ships with BAR1 fused to 64MB. Two CYA registers unlock
+the Resizable BAR capability to advertise up to 64GB, but doing that from the
+nvidia driver at probe time is too late: enumeration has already sized every
+bridge window for a 64MB BAR1, so pci_resize_resource() has nowhere to put the
+larger BAR and steps back down.
+
+pci_fixup_early runs in pci_setup_device() before pci_read_bases(), so doing
+the unlock there makes enumeration see a 64GB BAR1 directly and size the
+windows accordingly. This needs the companion pbus_size_mem() fix, otherwise
+the parent window is under-sized and only some of the GPUs get a BAR.
+
+Registers, via the config-space mirror at BAR0 + 0x88000:
+
+  0x724  NV_XVE_CYA_RESIZE_BAR1   bits[4:0] SIZE (log2 MB), bit5 WR_EN
+  0xDCC  NV_XVE_BAR1_CONFIG       bits[3:0] SIZE (= CYA.SIZE - 6), bit31 OVERWRITE
+  0xBBC  REBAR capability register for BAR1
+  0xBC0  REBAR control register for BAR1, bits[13:8] = size as log2(MB)
+
+Two things this has to get right. BAR0 is read from config space because
+dev->resource[] is not populated this early. And memory decode is not
+necessarily enabled yet -- with it off every read returns 0xffffffff and every
+write is silently discarded, so it is enabled for the duration and restored
+afterwards. All-ones is treated as "window not responding" and the BAR is left
+at its stock size rather than programmed blindly.
+
+Result on the machine above: all four GPUs come up with a 64GB BAR1 from a
+cold boot, with no kexec or userspace register poking.
+
+Quirk body unchanged; inserted after pci.h for Linux 6.8 and HWE sources.
+
+--- a/drivers/pci/quirks.c
++++ b/drivers/pci/quirks.c
+@@ -34,2 +34,107 @@
+ #include "pci.h"
++
++/*
++ * NVIDIA CMP 170HX / 220HX: unlock and select a 64GB BAR1 before the BARs are
++ * sized, so enumeration lays out bridge windows for the large BAR.
++ *
++ * Doing this at pci_fixup_early is the whole point: by probe time the windows
++ * are already sized for the stock 64MB BAR and the resize cannot be placed.
++ */
++#define CMP170HX_PCFG_OFFSET		0x88000
++#define CMP170HX_PCFG_LEN		0x1000
++#define CMP170HX_CYA_RESIZE_BAR1	0x724
++#define CMP170HX_BAR1_CONFIG		0xDCC
++#define CMP170HX_REBAR_CAP_BAR1		0xBBC
++#define CMP170HX_REBAR_CTRL_BAR1	0xBC0
++
++/* CYA: SIZE=16 (2^16 MB = 64GB) with WR_EN set. */
++#define CMP170HX_CYA_VALUE		0x30
++/* BAR1_CONFIG: OVERWRITE | SIZE=10 (CYA.SIZE - 6). */
++#define CMP170HX_CFG_VALUE		0x8000000A
++/* REBAR control size field, log2 of size in MB: 16 => 64GB. */
++#define CMP170HX_REBAR_SIZE_64G		16
++#define CMP170HX_REBAR_SIZE_MASK	0x00003F00
++#define CMP170HX_REBAR_SIZE_SHIFT	8
++
++static void quirk_nvidia_cmp170hx_bar1(struct pci_dev *dev)
++{
++	void __iomem *pcfg;
++	u32 bar0_lo, bar0_hi = 0, ctrl, cap;
++	u64 bar0;
++	u16 cmd;
++
++	/*
++	 * dev->resource[] is not filled in yet at this point, so take the
++	 * firmware-assigned BAR0 straight out of config space.
++	 */
++	pci_read_config_dword(dev, PCI_BASE_ADDRESS_0, &bar0_lo);
++	if ((bar0_lo & PCI_BASE_ADDRESS_SPACE) != PCI_BASE_ADDRESS_SPACE_MEMORY)
++		return;
++
++	if ((bar0_lo & PCI_BASE_ADDRESS_MEM_TYPE_MASK) ==
++	    PCI_BASE_ADDRESS_MEM_TYPE_64)
++		pci_read_config_dword(dev, PCI_BASE_ADDRESS_1, &bar0_hi);
++
++	bar0 = ((u64)bar0_hi << 32) | (bar0_lo & PCI_BASE_ADDRESS_MEM_MASK);
++	if (!bar0)
++		return;
++
++	pcfg = ioremap(bar0 + CMP170HX_PCFG_OFFSET, CMP170HX_PCFG_LEN);
++	if (!pcfg) {
++		pci_info(dev, "CMP 170HX: cannot map XVE regs, leaving BAR1 at stock size\n");
++		return;
++	}
++
++	/*
++	 * Memory decode is not necessarily enabled this early, and with it off
++	 * every MMIO read returns 0xffffffff and every write is discarded.
++	 * Enable it for the duration and restore the original command word.
++	 */
++	pci_read_config_word(dev, PCI_COMMAND, &cmd);
++	if (!(cmd & PCI_COMMAND_MEMORY))
++		pci_write_config_word(dev, PCI_COMMAND,
++				      cmd | PCI_COMMAND_MEMORY);
++
++	/* All-ones means the window is not responding; do not write into it. */
++	cap = readl(pcfg + CMP170HX_REBAR_CAP_BAR1);
++	if (cap == 0xffffffff) {
++		pci_info(dev, "CMP 170HX: XVE window not responding, leaving BAR1 at stock size\n");
++		goto out;
++	}
++
++	/* Unlock the capability so it advertises sizes up to 64GB. */
++	writel(CMP170HX_CYA_VALUE, pcfg + CMP170HX_CYA_RESIZE_BAR1);
++	writel(CMP170HX_CFG_VALUE, pcfg + CMP170HX_BAR1_CONFIG);
++	cap = readl(pcfg + CMP170HX_REBAR_CAP_BAR1);
++
++	/*
++	 * Capability bit N+4 means 2^N MB is supported, so 64GB (2^16 MB) is
++	 * bit 20. If the unlock did not take, do not touch the control
++	 * register -- selecting an unsupported size would be worse than
++	 * leaving the stock BAR alone. Re-test for all-ones too, since a dead
++	 * window would otherwise look like every size is supported.
++	 */
++	if (cap == 0xffffffff || !(cap & BIT(20))) {
++		pci_info(dev, "CMP 170HX: REBAR unlock did not take (cap %#x), leaving BAR1 at stock size\n",
++			 cap);
++		goto out;
++	}
++
++	/* Select 64GB in the control register; enumeration then sizes for it. */
++	ctrl = readl(pcfg + CMP170HX_REBAR_CTRL_BAR1);
++	ctrl &= ~CMP170HX_REBAR_SIZE_MASK;
++	ctrl |= CMP170HX_REBAR_SIZE_64G << CMP170HX_REBAR_SIZE_SHIFT;
++	writel(ctrl, pcfg + CMP170HX_REBAR_CTRL_BAR1);
++	ctrl = readl(pcfg + CMP170HX_REBAR_CTRL_BAR1);
++
++	pci_info(dev, "CMP 170HX: BAR1 REBAR programmed to 64GB before enumeration (cap %#x ctrl %#x)\n",
++		 cap, ctrl);
++out:
++	pci_write_config_word(dev, PCI_COMMAND, cmd);
++	iounmap(pcfg);
++}
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NVIDIA, 0x20c2,
++			quirk_nvidia_cmp170hx_bar1);
++DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NVIDIA, 0x2082,
++			quirk_nvidia_cmp170hx_bar1);
+ 
