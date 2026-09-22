@@ -1,0 +1,10 @@
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -5042,6 +5042,7 @@
+                     { 0x008200f0U, 0xffffffffU, "OPTB_F0" },
+                     { 0x008200f4U, 0xffffffffU, "OPTB_F4" },
+                     { 0x00823800U, 0xffffffffU, "FEAT_OVR_ECC_PLM" },
++                    { 0x0082380cU, 0x00988999U, "FEAT_OVR_ECC_VAL" },
+                     { 0x0082057cU, 0x00000000U, "OPT_GEN23" },
+                     { 0x0008e120U, 0x00000000U, "XP3G_VAL0" },
+                     { 0x0008e110U, 0x00000001U, "XP3G_OVR0" },

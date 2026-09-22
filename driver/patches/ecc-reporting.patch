@@ -1,0 +1,70 @@
+--- a/src/nvidia/arch/nvalloc/unix/src/escape.c
++++ b/src/nvidia/arch/nvalloc/unix/src/escape.c
+@@ -53,6 +53,7 @@
+ #include <ctrl/ctrl00fd.h>
+ 
+ #include <ctrl/ctrl00e0.h>
++#include <ctrl/ctrl2080/ctrl2080gpu.h> // cmpunlocker ECC
+ 
+ #define NV_CTL_DEVICE_ONLY(nv)                 \
+ {                                              \
+@@ -840,6 +841,59 @@
+ 
+             Nv04ControlWithSecInfo(pApi, secInfo);
+ 
++            /* cmpunlocker: surface ECC in nvidia-smi. GA100 CMP GSP firmware reports
++             * ECC unsupported (no InfoROM ECC object + cleared VBIOS SKU flag). These
++             * RM-control replies are rewritten so NVML reports ECC enabled. SM-side ECC
++             * hardware is really enabled via the FEATURE_OVERRIDE_ECC boot hook. */
++            if (pApi->cmd == 0x20800157U)   /* QUERY_INFOROM_ECC_SUPPORT */
++                pApi->status = NV_OK;
++            else if (pApi->cmd == 0x2080014bU &&   /* GET_INFOROM_OBJECT_VERSION: ECC */
++                pApi->paramsSize == sizeof(NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS) &&
++                NvP64_VALUE(pApi->params) != NULL)
++            {
++                NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS iv;
++                if (os_memcpy_from_user(&iv, NvP64_VALUE(pApi->params), sizeof(iv)) == NV_OK &&
++                    iv.objectType[0] == 'E' && iv.objectType[1] == 'C' && iv.objectType[2] == 'C')
++                {
++                    iv.version = 6; iv.subversion = 16;
++                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &iv, sizeof(iv)) == NV_OK)
++                        pApi->status = NV_OK;
++                }
++            }
++            else if (pApi->cmd == 0x2080012fU &&   /* QUERY_ECC_STATUS */
++                pApi->paramsSize == sizeof(NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS) &&
++                NvP64_VALUE(pApi->params) != NULL)
++            {
++                NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS *p = portMemAllocNonPaged(sizeof(*p));
++                if (p != NULL)
++                {
++                    NvU32 u; portMemSet(p, 0, sizeof(*p));
++                    for (u = 0; u < NV2080_CTRL_GPU_ECC_UNIT_COUNT; u++)
++                    {
++                        p->units[u].enabled = NV_TRUE;
++                        p->units[u].supported = NV_TRUE;
++                        p->units[u].scrubComplete = NV_TRUE;
++                    }
++                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), p, sizeof(*p)) == NV_OK)
++                        pApi->status = NV_OK;
++                    portMemFree(p);
++                }
++            }
++            else if (pApi->cmd == 0x20800133U && pApi->paramsSize >= 8U &&
++                NvP64_VALUE(pApi->params) != NULL)   /* QUERY_ECC_CONFIGURATION */
++            {
++                NvU32 cfg[2]; cfg[0] = 1U; cfg[1] = 1U;
++                if (os_memcpy_to_user(NvP64_VALUE(pApi->params), cfg, sizeof(cfg)) == NV_OK)
++                    pApi->status = NV_OK;
++            }
++            else if (pApi->cmd == 0x20803406U && pApi->paramsSize >= 1U &&
++                NvP64_VALUE(pApi->params) != NULL)   /* GET_UNREPAIRABLE_MEMORY_FLAG */
++            {
++                NvU8 z = 0;
++                if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &z, 1) == NV_OK)
++                    pApi->status = NV_OK;
++            }
++
+             if ((pApi->status != NV_OK) && (priv != NULL))
+             {
+                 //
