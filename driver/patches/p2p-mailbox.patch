@@ -179,10 +179,11 @@ Mailbox mode only; do not combine with the BAR1 or skip-mailbox patches.
  void
 --- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
-@@ -4876,6 +4876,7 @@
+@@ -4877,7 +4877,8 @@
              { 0x00088ff8U, 0xffffffffU, 0xffffffffU, "XVE_C" },
              { 0x00823b00U, 0xffffffffU, 0xffffffffU, "FEAT2" },
              { 0x008200fcU, 0xffffffffU, 0xffffffffU, "OPT_PLM" },
+             { 0x008200d8U, 0xffffffffU, 0xffffffffU, "RECONFIG_PLM" },
 +            { 0x0012277cU, 0xffffffffU, 0xffffffffU, "P2P_TRAP31" },
              { 0x009a3c7cU, 0xffffffffU, 0xffffffffU, "FBPA_PLL0" },
              { 0x009a3c80U, 0xffffffffU, 0xffffffffU, "FBPA_PLL1" },

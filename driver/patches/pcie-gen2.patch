@@ -1,7 +1,7 @@
 --- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
-@@ -4942,6 +4942,260 @@
-                       devId);
+@@ -4961,6 +4961,260 @@
+             }
          }
  
 +

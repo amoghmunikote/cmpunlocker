@@ -51,6 +51,7 @@ unlocks:
       opt_plm:        { addr: "0x008200fc", value: "0xffffffff" }
       feat:           { addr: "0x00823804", value: "0xffffffff" }
       feat2:          { addr: "0x00823b00", value: "0xffffffff" }
+      reconfig_plm:   { addr: "0x008200d8", value: "0xffffffff" }
       fbpa_plm:       { addr: "0x009a0148", value: "0xffffffff" }
       fbpa_mem_plm:   { addr: "0x009a0168", value: "0xffffffff" }
       fbpa_pll0_plm:  { addr: "0x009a3c7c", value: "0xffffffff" }
@@ -65,6 +66,8 @@ unlocks:
     registers:
       sm_speed_select_0: { addr: "0x0082381c", value: "0x88888888" }
       sm_speed_select_1: { addr: "0x00823820", value: "0x00000008" }
+      reconfig_override_gpc0: { addr: "0x00820a40", value: "0x000000ff" }
+      reconfig_status_gpc0:   { addr: "0x00820c38" }
 
   memory_geometry:
     patch: sec2-postbl-plm-ss-cfg.patch

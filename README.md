@@ -76,6 +76,16 @@ sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 
 Then perform a reboot.
 
+### Recovered compute units
+
+The driver now opens the RECONFIG privilege mask and clears the RECONFIG
+reservation for each GPC before GSP-RM boots. This is included in a normal
+install; no extra flag is needed. The [upstream SMs change](https://github.com/amoghmunikote/cmpunlocker/commit/19254b5ce80f801af7c7516211846b889cac359c)
+measured 70 to 74 SMs on one 8 GB card. The number recovered depends on each
+card's disabled and defective TPCs, so check the count after a cold boot with a
+working CUDA runtime. Memory unlock, BAR1 P2P, and 170tune support remain in the
+same build.
+
 ### Optional GPU-to-GPU P2P
 
 This checkout is based on `akumaburn/cmpunlocker2` with an optional port of

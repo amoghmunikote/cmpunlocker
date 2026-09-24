@@ -32,6 +32,11 @@ sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 
 Then power off and power on (cold boot).
 
+The SM recovery from upstream's `SMs` branch is included automatically. After
+boot, check each card's active SM count with your CUDA application or PyTorch's
+`torch.cuda.get_device_properties(i).multi_processor_count`. An upstream card
+showed 74 SMs; individual cards may expose a different number.
+
 ## Uninstall
 
 To uninstall cmpunlocker, run the following command:

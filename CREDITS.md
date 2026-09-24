@@ -11,3 +11,4 @@ Thanks to:
 | [asm64-hooligan](https://github.com/asm64-hooligan/cmpunlocker) | Adapted kernel-update persistence, private DMEM override path and longer scrub timeout |
 | [duggasco](https://github.com/duggasco) | Mailbox P2P privilege-trap implementation and optional Gen2 retraining, via asm64's fork |
 | [cachenetics](https://github.com/cachenetics/170tune) | External 170tune runtime tuning and per-card qualification tools |
+| [amoghmunikote](https://github.com/amoghmunikote/cmpunlocker/commit/19254b5ce80f801af7c7516211846b889cac359c) | RECONFIG override that recovered four SMs on an 8 GB card |

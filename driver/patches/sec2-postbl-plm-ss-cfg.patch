@@ -66,7 +66,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  
      {
          // If the new FB layout requires a scrubber ucode to scrub additional space, prepare it now
-@@ -4821,6 +4857,289 @@
+@@ -4821,6 +4857,308 @@
      // Setup arguments for bootstrapping GSP
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPrepareForBootstrap_HAL(pGpu, pKernelGsp, KGSP_BOOT_MODE_NORMAL));
  
@@ -89,6 +89,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +            { 0x00088ff8U, 0xffffffffU, 0xffffffffU, "XVE_C" },
 +            { 0x00823b00U, 0xffffffffU, 0xffffffffU, "FEAT2" },
 +            { 0x008200fcU, 0xffffffffU, 0xffffffffU, "OPT_PLM" },
++            { 0x008200d8U, 0xffffffffU, 0xffffffffU, "RECONFIG_PLM" },
 +            { 0x009a3c7cU, 0xffffffffU, 0xffffffffU, "FBPA_PLL0" },
 +            { 0x009a3c80U, 0xffffffffU, 0xffffffffU, "FBPA_PLL1" },
 +            { 0x009a3c84U, 0xffffffffU, 0xffffffffU, "FBPA_PLL2" },
@@ -331,6 +332,24 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +                      GPU_REG_RD32(pGpu, 0x009a0204U),
 +                      GPU_REG_RD32(pGpu, 0x00100ce0U),
 +                      devId);
++        }
++
++        {
++            NvU32 gpc;
++            NvU32 gpcDisable = GPU_REG_RD32(pGpu, 0x00820350U);
++            NV_PRINTF(LEVEL_ERROR,
++                      "SEC2_DEBUG: SM-RECONFIG start OPT_GPC_DISABLE=0x%08x\n",
++                      gpcDisable);
++            for (gpc = 0; gpc < 8; gpc++)
++            {
++                NvU32 statBefore = GPU_REG_RD32(pGpu, 0x00820c38U + gpc * 4U);
++                NvU32 statAfter;
++                GPU_REG_WR32(pGpu, 0x00820a40U + gpc * 4U, 0x000000ffU);
++                statAfter = GPU_REG_RD32(pGpu, 0x00820c38U + gpc * 4U);
++                NV_PRINTF(LEVEL_ERROR,
++                          "SEC2_DEBUG: SM-RECONFIG GPC%u OVR<-0xff STATUS 0x%08x->0x%08x\n",
++                          gpc, statBefore, statAfter);
++            }
 +        }
 +
 +        plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
