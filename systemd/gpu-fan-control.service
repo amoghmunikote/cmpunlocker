@@ -1,0 +1,37 @@
+[Unit]
+Description=GPU-aware fan control for CMP 170HX cards (FAN4 / FAN7)
+Documentation=file:/home/arveen/cmpunlocker/tools/gpu-fan-control.py
+# The daemon needs the nvidia driver up to read die temperatures, and the IPMI
+# character device up to talk to the BMC. Neither is a hard dependency: it
+# tolerates nvidia-smi failing (it forces 100% duty) and systemd restarts it if
+# /dev/ipmi0 is not there yet.
+Wants=nvidia-persistenced.service
+After=nvidia-persistenced.service systemd-modules-load.service
+
+# Never stop trying. If this daemon is dead the GPU fans fall back to the BMC
+# curve, which parks them at 30% regardless of GPU temperature -- the exact
+# condition this unit exists to prevent. Retry forever rather than let systemd
+# give up after the default burst limit. These two keys live in [Unit], not
+# [Service]; systemd >= 229 ignores them in [Service].
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+ExecStartPre=/sbin/modprobe nvidia
+ExecStartPre=/sbin/modprobe ipmi_devintf
+ExecStart=/usr/bin/python3 /home/arveen/cmpunlocker/tools/gpu-fan-control.py
+
+Restart=always
+RestartSec=5
+
+# On a deliberate stop, hand the headers back to the BMC. The daemon already
+# does this itself on SIGTERM; this covers SIGKILL and startup failures.
+ExecStopPost=-/usr/bin/ipmitool raw 0x3a 0xd8 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gpu-fan
+
+[Install]
+WantedBy=multi-user.target
