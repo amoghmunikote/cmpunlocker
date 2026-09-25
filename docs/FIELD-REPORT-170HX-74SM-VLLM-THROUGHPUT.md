@@ -9,8 +9,8 @@
 - Two CMP 170HX cards (device id `10de:20c2`, 8 GB SKU, unlocked to 64 GB) went from
   **70 SM → 74 SM on both cards** after upgrading cmpunlocker `a3ea84b` (2026-09-06)
   → **`6c442ee`** (PR #55, merged 2026-09-25 11:09 +08).
-- Driver **610.43.02**, PCIe **Gen2**, `verify.sh` → `[OK]`, **65536 MiB** per card,
-  **zero Xid** after a cold reboot.
+- driver **610.43.02**, PCIe **Gen2**, `verify.sh` → `[OK]`, **65536 MiB** per card,
+  **zero Xid** after the reboot (plain `reboot`, see *Upgrade procedure*).
 - Production workload on one card: **vLLM 0.28.0 + MTP(5) / Qwen3.8-27B-FP8, 262144 ctx**
   → steady-state 512-token decode **≈79 tok/s (76–92 across 4 warm rounds)**.
 - **Gotcha worth copying**: vLLM `torch.compile` caches are keyed by SM count — after the
@@ -28,7 +28,7 @@
 | Link | PCIe Gen2 (software-gen2 already in master) |
 | Cooling | Blower + duct (card is passively cooled from the factory) |
 
-Post-upgrade verification (cold reboot, then `verify.sh`):
+Post-upgrade verification (after the reboot, then `verify.sh`):
 
 ```
 verify.sh                        -> [OK]
@@ -67,11 +67,15 @@ GPU1: NVIDIA CMP 170HX SMs=74 CC=8.0 VRAM=63.4GB
    contains 610.43.02.
 3. `install.sh --profile=8gb --no-gen2-service` → 5 `.ko` + new `cmp_no_bus_reset.ko`,
    `depmod` + initramfs rebuild OK.
-4. **Hot reload does not apply the new SEC2/PLM path** — it fails as expected; a
-   **cold power cycle** is required. (The old modules keep running until then, so
-   services can stay up during the window.)
-5. After reboot: `verify.sh` → `[OK]`, SM counts re-checked, `Xid` checked, services
-   brought back up and a smoke inference run performed.
+4. **Hot reload does not apply the new SEC2/PLM path** — it fails as expected, so the
+   modules must be restarted at boot. The installer prints
+   `Cold reboot recommended: sudo shutdown -h now  (then power on)`, but
+   **in our run a plain `reboot` over SSH was enough — no physical power cycle was
+   needed** (we verified this the same day: unlock took effect right after that reboot).
+   The old modules keep running until the restart, so services can stay up during the
+   window.
+5. After that reboot: `verify.sh` → `[OK]`, SM counts re-checked, `Xid` checked,
+   services brought back up and a smoke inference run performed.
 
 ## Production benchmark (74 SM state)
 
@@ -99,6 +103,9 @@ consumers. Ambient cooling uncontrolled; sampled at **84 °C / 1395 MHz / 79 W**
 
 ## Pitfalls hit during the upgrade
 
+0. **Hot reload does not pick up the new SEC2/PLM patch** — expect it to fail; restart
+   the modules at boot. Upstream *recommends* a cold reboot (`sudo shutdown -h now`
+   then power on); a plain SSH `reboot` was sufficient on our machine.
 1. **vLLM `torch.compile` cache is keyed by SM count.** After 70 → 74, cached artifacts
    fail an assertion (`expected size 74==70`) and vLLM crash-loops
    (`NRestarts=14`). Clear **every** user's cache, not just the shell user's:
