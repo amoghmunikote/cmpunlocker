@@ -97,7 +97,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +                  "SEC2_DEBUG: saved WPR2 lo=0x%08x hi=0x%08x\n",
 +                  wpr2Lo, wpr2Hi);
 +
-+        for (plmIdx = 0; plmIdx < 12; plmIdx++)
++        for (plmIdx = 0; plmIdx < NV_ARRAY_ELEMENTS(plmTable); plmIdx++)
 +        {
 +            NvBool opened = NV_FALSE;
 +            for (attempt = 0; attempt < 2 && !opened; attempt++)
