@@ -1,0 +1,14 @@
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -5517,6 +5517,11 @@
+             { 0x008200d8U, 0xffffffffU, "RECONFIG_PLM" },
+             { 0x0000c840U, 0xffffffffU, "PJTAG_PLM" },
+             { 0x0000c848U, 0xffffffffU, "PJTAG_SEC_PLM" },
++            { 0x009a0168U, 0xffffffffU, "FBPA_MEM" },
++            { 0x009a3c7cU, 0xffffffffU, "FBPA_PLL0" },
++            { 0x009a3c80U, 0xffffffffU, "FBPA_PLL1" },
++            { 0x009a3c84U, 0xffffffffU, "FBPA_PLL2" },
++            { 0x00903c7cU, 0xffffffffU, "FBPA0_PLL" },
+         };
+ 
+         NvU32 wpr2Lo = GPU_REG_RD32(pGpu, 0x001fa824U);

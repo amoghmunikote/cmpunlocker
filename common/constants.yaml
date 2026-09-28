@@ -53,6 +53,15 @@ unlocks:
       feat2:          { addr: "0x00823b00", value: "0xffffffff" }
       fbpa_plm:       { addr: "0x009a0148", value: "0xffffffff" }
 
+  hbm_control:
+    patch: hbm-control-plm.patch
+    registers:
+      fbpa_mem_plm:  { addr: "0x009a0168", value: "0xffffffff" }
+      fbpa_pll0_plm: { addr: "0x009a3c7c", value: "0xffffffff" }
+      fbpa_pll1_plm: { addr: "0x009a3c80", value: "0xffffffff" }
+      fbpa_pll2_plm: { addr: "0x009a3c84", value: "0xffffffff" }
+      fbpa0_pll_plm: { addr: "0x00903c7c", value: "0xffffffff" }
+
   compute_throughput:
     patch: sec2-postbl-plm-ss-cfg.patch
     registers:

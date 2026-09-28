@@ -57,7 +57,13 @@ PATCH_ORDER=(
     name-string.patch
     bar1-resize-unlock.patch
     cmp-sku-mask.patch
+    hbm-control-plm.patch
 )
+if [[ "${CMPUNLOCKER_HBM_PLM:-1}" == "0" ]]; then
+    warn "Skipping hbm-control-plm.patch (--no-hbm-plm)"
+    PATCH_ORDER=("${PATCH_ORDER[@]/hbm-control-plm.patch}")
+    mapfile -t PATCH_ORDER < <(printf '%s\n' "${PATCH_ORDER[@]}" | grep .)
+fi
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
     p="${PATCH_DIR}/${name}"

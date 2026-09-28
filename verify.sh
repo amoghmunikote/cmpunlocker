@@ -123,6 +123,10 @@ else
     warn "No SEC2_DEBUG lines in dmesg (logs may have rotated; unlock can still be OK if memory is unlocked)"
 fi
 
+if printf '%s\n' "${sec2_logs}" | grep -q 'FAILED to open FBPA_'; then
+    warn "HBM control PLMs did not open: host HBM clock/refresh writes will be dropped"
+fi
+
 echo ""
 if [[ -r "${INSTALL_MOD_DIR}/card_profile" ]]; then
     info "Installed profile: $(cat "${INSTALL_MOD_DIR}/card_profile") / geometry: $(cat "${INSTALL_MOD_DIR}/unlock_geometry" 2>/dev/null || echo '?')"
