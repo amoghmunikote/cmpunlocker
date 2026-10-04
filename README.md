@@ -95,6 +95,10 @@ Then perform a reboot.
     <td>PCIe Gen 2 speeds</td>
     <td>Working ✓</td>
   </tr>
+    <tr>
+    <td>Error-Correcting Code (ECC) DRAM and SRAM </td>
+    <td>Working ✓</td>
+  </tr>
   <tr>
     <td>Full BAR1 Size (64GB)</td>
     <td>Working ✓</td>
