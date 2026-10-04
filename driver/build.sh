@@ -56,7 +56,6 @@ PATCH_ORDER=(
     pcie-gen2-probe-retrain.patch
     name-string.patch
     bar1-resize-unlock.patch
-    floorsweep-guard.patch
     cmp-sku-mask.patch
     ecc-enable.patch
 )
@@ -72,7 +71,6 @@ PROFILE="${CMPUNLOCKER_CARD_PROFILE:-8gb}"
 case "${PROFILE}" in
     8GB) PROFILE="8gb" ;;
     10GB) PROFILE="10gb" ;;
-    ES) PROFILE="es" ;;
     MIXED) PROFILE="mixed" ;;
 esac
 
@@ -123,7 +121,7 @@ else
 
     info "Applying memory profile ${PROFILE} (${UNLOCK_LABEL} geometry)..."
     if [[ "${SKIP_GEOMETRY_REWRITE}" -eq 1 ]]; then
-        info "${PROFILE} profile: runtime geometry (no build-time CFG1/LMR rewrite)"
+        info "mixed profile: runtime device-id geometry (no build-time CFG1/LMR rewrite)"
     else
         python3 - "${GSP_C}" "${CFG1}" "${LMR}" "${FB_BYTES}" "${UNLOCK_LABEL}" <<'PY'
 import pathlib, re, sys
@@ -254,14 +252,14 @@ info "Attempting to unload NVIDIA modules..."
 systemctl stop nvidia-persistenced 2>/dev/null || true
 systemctl stop nvidia-fabricmanager 2>/dev/null || true
 reload_ok=0
-if lsmod | grep -q '^nvidia'; then
+if grep -q '^nvidia' /proc/modules; then
     for mod in nvidia_drm nvidia_uvm nvidia_modeset nvidia; do
         modprobe -r "${mod}" 2>/dev/null || true
     done
     sleep 1
 fi
 
-if ! lsmod | grep -q '^nvidia '; then
+if ! grep -q '^nvidia ' /proc/modules; then
     if modprobe nvidia && modprobe nvidia-modeset; then
         modprobe nvidia-uvm 2>/dev/null || true
         modprobe nvidia-drm 2>/dev/null || true

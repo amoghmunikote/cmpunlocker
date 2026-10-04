@@ -1,17 +1,15 @@
---- a/src/nvidia/src/kernel/gpu/gpu.c	2026-08-26 12:46:10.121250423 +0900
-+++ b/src/nvidia/src/kernel/gpu/gpu.c	2026-08-26 12:46:10.149250543 +0900
-@@ -911,6 +911,14 @@
-     pGpu->idInfo.PCISubDeviceID = pGpu->pChipInfo->pciSubDeviceId;
-     pGpu->idInfo.PCIRevisionID  = pGpu->pChipInfo->pciRevisionId;
- 
-+    {
-+        NvU32 cmpDevId = pGpu->pChipInfo->pciDeviceId >> 16;
-+        if (cmpDevId == 0x20C2 || cmpDevId == 0x2082)
-+        {
-+            pGpu->pChipInfo->isCmpSku = NV_FALSE;
-+        }
-+    }
-+
- done:
-     if (status != NV_OK)
-     {
+--- a/src/nvidia/src/kernel/gpu/subdevice/subdevice_ctrl_gpu_kernel.c
++++ b/src/nvidia/src/kernel/gpu/subdevice/subdevice_ctrl_gpu_kernel.c
+@@ -518,3 +518,11 @@
+                 {
+-                    data = NV2080_CTRL_GPU_INFO_INDEX_CMP_SKU_YES;
++                    NvU32 cmpDevId = pGpu->idInfo.PCIDeviceID >> 16;
++                    if (cmpDevId == 0x20C2 || cmpDevId == 0x2082)
++                    {
++                        data = NV2080_CTRL_GPU_INFO_INDEX_CMP_SKU_NO;
++                    }
++                    else
++                    {
++                        data = NV2080_CTRL_GPU_INFO_INDEX_CMP_SKU_YES;
++                    }
+                 }

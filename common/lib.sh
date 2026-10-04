@@ -55,7 +55,6 @@ expected_mib_for_profile() {
     case "$1" in
         8gb) echo "65536" ;;
         10gb) echo "40960" ;;
-        es) echo "32768" ;;
         *) echo "" ;;
     esac
 }

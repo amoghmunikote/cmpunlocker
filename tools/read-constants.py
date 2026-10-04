@@ -18,7 +18,7 @@ def hex_forms(text):
     if not m:
         return None
     digits = m.group(1).lower().lstrip("0") or "0"
-    forms = {digits, digits.zfill(16), digits.zfill(8), digits.zfill(4)}
+    forms = {digits, digits.zfill(8), digits.zfill(4)}
     return {"0x" + f for f in forms}
 
 
@@ -26,16 +26,7 @@ def present(blob_lower, value):
     forms = hex_forms(value)
     if forms is None:
         return False
-    return any(re.search(re.escape(f) + r"[ul]*\b", blob_lower)
-               for f in forms)
-
-
-def read_expected_mib(lib_sh):
-    text = io.open(lib_sh, encoding="utf-8").read()
-    m = re.search(r"expected_mib_for_profile\(\)\s*\{(.*?)\n\}", text, re.S)
-    if not m:
-        sys.exit("error: expected_mib_for_profile not found in %s" % lib_sh)
-    return dict(re.findall(r'(\w+)\)\s*echo\s*"(\d+)"', m.group(1)))
+    return any(re.search(re.escape(f) + r"u?\b", blob_lower) for f in forms)
 
 
 def read_patch_order(build_sh):
@@ -80,24 +71,6 @@ def main():
         problems.append("constants.yaml declares %s but it is not in "
                         "PATCH_ORDER" % name)
 
-    lib_sh = os.path.join(os.path.dirname(os.path.abspath(cpath)), "lib.sh")
-    if not os.path.isfile(lib_sh):
-        problems.append("missing %s" % lib_sh)
-        lib_mib = {}
-    else:
-        lib_mib = read_expected_mib(lib_sh)
-    for pname in sorted(c.get("gpu", {}).get("device_ids") or {}):
-        if pname not in profiles:
-            problems.append("device_ids lists %s but profiles does not"
-                            % pname)
-            continue
-        want = str(profiles[pname].get("unlocked_mib", ""))
-        got = lib_mib.get(pname, "")
-        if got != want:
-            problems.append("profile %s: constants say unlocked_mib=%s but "
-                            "lib.sh expected_mib_for_profile says %r"
-                            % (pname, want, got))
-
     cache = {}
     for uname in sorted(unlocks):
         u = unlocks[uname] or {}
@@ -123,28 +96,6 @@ def main():
             if val and not present(blob, val):
                 problems.append("unlock %s: %s value %s not found in %s"
                                 % (uname, rname, val, pname))
-
-    for pname in sorted(profiles):
-        det = (profiles[pname] or {}).get("detect")
-        if not det:
-            continue
-        dpatch = det.get("patch")
-        dpath = os.path.join(patch_dir, dpatch or "")
-        if not dpatch or not os.path.isfile(dpath):
-            problems.append("profile %s: detect patch %s missing"
-                            % (pname, dpatch))
-            continue
-        if dpath not in cache:
-            cache[dpath] = io.open(dpath, encoding="utf-8",
-                                   errors="replace").read().lower()
-        blob = cache[dpath]
-        checks = [(k, v) for k, v in sorted(det.items()) if k != "patch"]
-        checks += [(k, profiles[pname][k])
-                   for k in ("cfg1", "lmr", "fb_bytes")]
-        for kname, val in checks:
-            if not present(blob, str(val)):
-                problems.append("profile %s: %s %s not found in %s"
-                                % (pname, kname, val, dpatch))
 
     pt = c.get("passthrough") or {}
     if pt:

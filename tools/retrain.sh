@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SYS=/sys/bus/pci/devices/0000:0a:00.0
-for i in $(seq 1 120); do
+for _ in $(seq 1 120); do
   if [[ -e $SYS/resource0 ]] && nvidia-smi -L &>/dev/null; then
     break
   fi

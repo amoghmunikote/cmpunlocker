@@ -6,14 +6,14 @@ Here are the steps to install cmpunlocker on your system.
 
 ## Requirements
 
-- NVIDIA CMP 170HX (8GB or 10GB)
-- Linux operating system (Ubuntu, Debian, Fedora, etc.)
-- Kernel headers matching the running kernel (linux-headers-$(uname -r) / kernel-devel)
-- Python 3
-- **nvidia-open 610.43.0x already installed** (libs + firmware)
-- Root access to the system (sudo privileges)
-- Secure Boot disabled
-- Network access on first install (downloads matching stock open-gpu-kernel-modules sources)
+- Linux (x86-64)
+- Root access
+- NVIDIA CMP 170HX
+- **nvidia-open 610.xx.xx+ already installed** (libs + firmware)
+- Kernel headers matching the running kernel (`linux-headers-$(uname -r)` / `kernel-devel`)
+- Secure Boot disabled (patched modules are unsigned)
+- Network access on first install (downloads matching stock `open-gpu-kernel-modules` sources)
+- Python 3 (used at build time to select 8GB/10GB geometry)
 
 ## Install
 
@@ -30,14 +30,14 @@ sudo ./install.sh --profile=8gb    # 8GB card → 64GB unlock
 sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 ```
 
-Then perform a cold reboot (full power off, then boot).
+Then perform a reboot.
 
 ## Uninstall
 
 To uninstall cmpunlocker, run the following command:
 
 ```bash
-sudo ./uninstall.sh --yes
+sudo ./remove.sh --yes
 ```
 
-Then perform a cold reboot (full power off, then boot).
+Then perform a reboot.

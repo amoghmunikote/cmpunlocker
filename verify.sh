@@ -19,9 +19,6 @@ is_unlocked_memory() {
         10gb)
             (( mem_mib >= 35000 && mem_mib < 60000 )) && return 0
             ;;
-        es)
-            (( mem_mib >= 30000 && mem_mib < 35000 )) && return 0
-            ;;
     esac
     return 1
 }
@@ -36,9 +33,6 @@ is_stock_memory() {
             ;;
         10gb)
             (( mem_mib >= 9728 && mem_mib <= 10752 )) && return 0
-            ;;
-        es)
-            (( mem_mib >= 7680 && mem_mib <= 8704 )) && return 0
             ;;
     esac
     return 1
