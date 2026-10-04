@@ -58,6 +58,8 @@ PATCH_ORDER=(
     bar1-resize-unlock.patch
     cmp-sku-mask.patch
     ecc-enable.patch
+    ecc-fbpa-static.patch
+    ecc-reporting.patch
 )
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do

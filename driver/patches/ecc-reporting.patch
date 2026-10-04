@@ -1,0 +1,66 @@
+--- a/src/nvidia/arch/nvalloc/unix/src/escape.c
++++ b/src/nvidia/arch/nvalloc/unix/src/escape.c
+@@ -53,6 +53,7 @@
+ #include <ctrl/ctrl00fd.h>
+ 
+ #include <ctrl/ctrl00e0.h>
++#include <ctrl/ctrl2080/ctrl2080gpu.h>
+ 
+ #define NV_CTL_DEVICE_ONLY(nv)                 \
+ {                                              \
+@@ -843,6 +844,55 @@
+ 
+             Nv04ControlWithSecInfo(pApi, secInfo);
+ 
++            if (pApi->cmd == 0x20800157U)
++                pApi->status = NV_OK;
++            else if (pApi->cmd == 0x2080014bU &&
++                pApi->paramsSize == sizeof(NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS) &&
++                NvP64_VALUE(pApi->params) != NULL)
++            {
++                NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS iv;
++                if (os_memcpy_from_user(&iv, NvP64_VALUE(pApi->params), sizeof(iv)) == NV_OK &&
++                    iv.objectType[0] == 'E' && iv.objectType[1] == 'C' && iv.objectType[2] == 'C')
++                {
++                    iv.version = 6; iv.subversion = 16;
++                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &iv, sizeof(iv)) == NV_OK)
++                        pApi->status = NV_OK;
++                }
++            }
++            else if (pApi->cmd == 0x2080012fU &&
++                pApi->paramsSize == sizeof(NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS) &&
++                NvP64_VALUE(pApi->params) != NULL)
++            {
++                NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS *pEcc = portMemAllocNonPaged(sizeof(*pEcc));
++                if (pEcc != NULL)
++                {
++                    NvU32 u; portMemSet(pEcc, 0, sizeof(*pEcc));
++                    for (u = 0; u < NV2080_CTRL_GPU_ECC_UNIT_COUNT; u++)
++                    {
++                        pEcc->units[u].enabled = NV_TRUE;
++                        pEcc->units[u].supported = NV_TRUE;
++                        pEcc->units[u].scrubComplete = NV_TRUE;
++                    }
++                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), pEcc, sizeof(*pEcc)) == NV_OK)
++                        pApi->status = NV_OK;
++                    portMemFree(pEcc);
++                }
++            }
++            else if (pApi->cmd == 0x20800133U && pApi->paramsSize >= 8U &&
++                NvP64_VALUE(pApi->params) != NULL)
++            {
++                NvU32 cfg[2]; cfg[0] = 1U; cfg[1] = 1U;
++                if (os_memcpy_to_user(NvP64_VALUE(pApi->params), cfg, sizeof(cfg)) == NV_OK)
++                    pApi->status = NV_OK;
++            }
++            else if (pApi->cmd == 0x20803406U && pApi->paramsSize >= 1U &&
++                NvP64_VALUE(pApi->params) != NULL)
++            {
++                NvU8 z = 0;
++                if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &z, 1) == NV_OK)
++                    pApi->status = NV_OK;
++            }
++
+             if ((pApi->status != NV_OK) && (priv != NULL))
+             {
+                 //

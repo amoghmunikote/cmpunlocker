@@ -1,0 +1,11 @@
+--- a/src/nvidia/src/kernel/gpu/mem_sys/kern_mem_sys.c
++++ b/src/nvidia/src/kernel/gpu/mem_sys/kern_mem_sys.c
+@@ -131,6 +131,8 @@
+             pGpu, pKernelMemorySystem, pStaticConfig),
+         exit);
+ 
++    pStaticConfig->bEnabledEccFBPA = NV_TRUE;
++
+ exit:
+     if (status != NV_OK)
+     {

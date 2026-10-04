@@ -1,22 +1,39 @@
---- a/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
-+++ b/src/nvidia/src/kernel/gpu/gsp/arch/turing/kernel_gsp_tu102.c
-@@ -607,6 +607,19 @@
-                       GPU_REG_RD32(pGpu, SEC2_DEBUG_PRI_FEATURE_OVERRIDE_SM_SPEED),
-                       GPU_REG_RD32(pGpu, SEC2_DEBUG_PRI_FEATURE_OVERRIDE_SM_SPEED_1),
-                       GPU_REG_RD32(pGpu, SEC2_DEBUG_PRI_FBPA_CFG1),
-                       GPU_REG_RD32(pGpu, SEC2_DEBUG_PRI_MMU_LMR));
-+
-+            GPU_REG_WR32(pGpu, 0x0082380cU,
-+                         GPU_REG_RD32(pGpu, 0x0082380cU) | 0x00999999U);
-+            GPU_REG_WR32(pGpu, 0x00823810U,
-+                         GPU_REG_RD32(pGpu, 0x00823810U) | 0x003fffffU);
-+            GPU_REG_WR32(pGpu, 0x0082382cU,
-+                         GPU_REG_RD32(pGpu, 0x0082382cU) | 0x0000000fU);
-+
-+            NV_PRINTF(LEVEL_ERROR,
-+                      "SEC2_DEBUG: POST-BooterLoad ECC=0x%08x ECC1=0x%08x ECC2=0x%08x\n",
-+                      GPU_REG_RD32(pGpu, 0x0082380cU),
-+                      GPU_REG_RD32(pGpu, 0x00823810U),
-+                      GPU_REG_RD32(pGpu, 0x0082382cU));
+--- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
++++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+@@ -5869,6 +5869,36 @@
+                       PCIE_LINK_SPEED_OF(statAfter));
          }
-     }
+ 
++        {
++            static const struct { NvU32 addr; NvU32 val; NvU32 isOr; } eccRcp[] = {
++                { 0x001fa7ccU, 0xffffffffU, 0U },
++                { 0x001fa7c8U, 0xffffffffU, 0U },
++                { 0x001fa7c0U, 0xffffffffU, 0U },
++                { 0x001fa7d0U, 0xffffffffU, 0U },
++                { 0x0082380cU, 0x00898888U, 0U },
++                { 0x009a0470U, 0x00000041U, 1U },
++                { 0x009a1004U, 0x00000200U, 1U },
++                { 0x009a033cU, 0x00000003U, 1U },
++                { 0x009a0084U, 0x00000001U, 1U },
++                { 0x0017e318U, 0x00000001U, 1U },
++                { 0x0017e21cU, 0x00000001U, 1U },
++            };
++            NvU32 eccI, eccV;
++            for (eccI = 0; eccI < NV_ARRAY_ELEMENTS(eccRcp); eccI++)
++            {
++                GPU_REG_WR32(pGpu, 0x001fa824U, 0xffffffffU);
++                GPU_REG_WR32(pGpu, 0x001fa828U, 0x00000000U);
++                eccV = eccRcp[eccI].isOr ? (GPU_REG_RD32(pGpu, eccRcp[eccI].addr) | eccRcp[eccI].val) : eccRcp[eccI].val;
++                (void) kgspSec2PostblTimingRefillPayload(pGpu, pKernelGsp, eccRcp[eccI].addr, eccV);
++                (void) kgspExecuteBooterLoad_HAL(pGpu, pKernelGsp,
++                    memdescGetPhysAddr(SEC2_POSTBL_TIMING_WPR_META_DESC(pKernelGsp), AT_GPU, 0));
++            }
++            GPU_REG_WR32(pGpu, 0x001fa81cU, 0xffffffffU); GPU_REG_WR32(pGpu, 0x001fa820U, 0x00000000U);
++            GPU_REG_WR32(pGpu, 0x001fa824U, 0xffffffffU); GPU_REG_WR32(pGpu, 0x001fa828U, 0x00000000U);
++            GPU_REG_WR32(pGpu, 0x001fa804U, 0xffffffffU); GPU_REG_WR32(pGpu, 0x001fa808U, 0x00000000U);
++            GPU_REG_WR32(pGpu, 0x001fa82cU, 0xffffffffU); GPU_REG_WR32(pGpu, 0x001fa830U, 0x00000000U);
++            GPU_REG_WR32(pGpu, 0x001fa80cU, GPU_REG_RD32(pGpu, 0x001fa80cU) & ~0x10U);
++        }
+         plmStatus = kgspSec2PostblTimingRebuildStockSignature(pGpu, pKernelGsp);
+         if (plmStatus != NV_OK)
+         {
