@@ -1,3 +1,4 @@
+diff --git a/src/nvidia/arch/nvalloc/unix/src/escape.c b/src/nvidia/arch/nvalloc/unix/src/escape.c
 --- a/src/nvidia/arch/nvalloc/unix/src/escape.c
 +++ b/src/nvidia/arch/nvalloc/unix/src/escape.c
 @@ -53,6 +53,7 @@
@@ -8,59 +9,118 @@
  
  #define NV_CTL_DEVICE_ONLY(nv)                 \
  {                                              \
-@@ -843,6 +844,55 @@
+@@ -834,6 +835,58 @@ NV_STATUS RmIoctl(
  
              Nv04ControlWithSecInfo(pApi, secInfo);
  
-+            if (pApi->cmd == 0x20800157U)
-+                pApi->status = NV_OK;
-+            else if (pApi->cmd == 0x2080014bU &&
-+                pApi->paramsSize == sizeof(NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS) &&
-+                NvP64_VALUE(pApi->params) != NULL)
++            if (rmapiIsCmp170hxGpu(pApi->hClient, pApi->hObject))
 +            {
-+                NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS iv;
-+                if (os_memcpy_from_user(&iv, NvP64_VALUE(pApi->params), sizeof(iv)) == NV_OK &&
-+                    iv.objectType[0] == 'E' && iv.objectType[1] == 'C' && iv.objectType[2] == 'C')
++                if (pApi->cmd == 0x20800157U)
++                    pApi->status = NV_OK;
++                else if (pApi->cmd == 0x2080014bU &&
++                    pApi->paramsSize == sizeof(NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS) &&
++                    NvP64_VALUE(pApi->params) != NULL)
 +                {
-+                    iv.version = 6; iv.subversion = 16;
-+                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &iv, sizeof(iv)) == NV_OK)
-+                        pApi->status = NV_OK;
-+                }
-+            }
-+            else if (pApi->cmd == 0x2080012fU &&
-+                pApi->paramsSize == sizeof(NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS) &&
-+                NvP64_VALUE(pApi->params) != NULL)
-+            {
-+                NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS *pEcc = portMemAllocNonPaged(sizeof(*pEcc));
-+                if (pEcc != NULL)
-+                {
-+                    NvU32 u; portMemSet(pEcc, 0, sizeof(*pEcc));
-+                    for (u = 0; u < NV2080_CTRL_GPU_ECC_UNIT_COUNT; u++)
++                    NV2080_CTRL_GPU_GET_INFOROM_OBJECT_VERSION_PARAMS iv;
++                    if (os_memcpy_from_user(&iv, NvP64_VALUE(pApi->params), sizeof(iv)) == NV_OK &&
++                        iv.objectType[0] == 'E' && iv.objectType[1] == 'C' && iv.objectType[2] == 'C')
 +                    {
-+                        pEcc->units[u].enabled = NV_TRUE;
-+                        pEcc->units[u].supported = NV_TRUE;
-+                        pEcc->units[u].scrubComplete = NV_TRUE;
++                        iv.version = 6; iv.subversion = 16;
++                        if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &iv, sizeof(iv)) == NV_OK)
++                            pApi->status = NV_OK;
 +                    }
-+                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), pEcc, sizeof(*pEcc)) == NV_OK)
-+                        pApi->status = NV_OK;
-+                    portMemFree(pEcc);
 +                }
-+            }
-+            else if (pApi->cmd == 0x20800133U && pApi->paramsSize >= 8U &&
-+                NvP64_VALUE(pApi->params) != NULL)
-+            {
-+                NvU32 cfg[2]; cfg[0] = 1U; cfg[1] = 1U;
-+                if (os_memcpy_to_user(NvP64_VALUE(pApi->params), cfg, sizeof(cfg)) == NV_OK)
-+                    pApi->status = NV_OK;
-+            }
-+            else if (pApi->cmd == 0x20803406U && pApi->paramsSize >= 1U &&
-+                NvP64_VALUE(pApi->params) != NULL)
-+            {
-+                NvU8 z = 0;
-+                if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &z, 1) == NV_OK)
-+                    pApi->status = NV_OK;
++                else if (pApi->cmd == 0x2080012fU &&
++                    pApi->paramsSize == sizeof(NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS) &&
++                    NvP64_VALUE(pApi->params) != NULL)
++                {
++                    NV2080_CTRL_GPU_QUERY_ECC_STATUS_PARAMS *pEcc = portMemAllocNonPaged(sizeof(*pEcc));
++                    if (pEcc != NULL)
++                    {
++                        NvU32 u; portMemSet(pEcc, 0, sizeof(*pEcc));
++                        for (u = 0; u < NV2080_CTRL_GPU_ECC_UNIT_COUNT; u++)
++                        {
++                            pEcc->units[u].enabled = NV_TRUE;
++                            pEcc->units[u].supported = NV_TRUE;
++                            pEcc->units[u].scrubComplete = NV_TRUE;
++                        }
++                        if (os_memcpy_to_user(NvP64_VALUE(pApi->params), pEcc, sizeof(*pEcc)) == NV_OK)
++                            pApi->status = NV_OK;
++                        portMemFree(pEcc);
++                    }
++                }
++                else if (pApi->cmd == 0x20800133U && pApi->paramsSize >= 8U &&
++                    NvP64_VALUE(pApi->params) != NULL)
++                {
++                    NvU32 cfg[2]; cfg[0] = 1U; cfg[1] = 1U;
++                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), cfg, sizeof(cfg)) == NV_OK)
++                        pApi->status = NV_OK;
++                }
++                else if (pApi->cmd == 0x20803406U && pApi->paramsSize >= 1U &&
++                    NvP64_VALUE(pApi->params) != NULL)
++                {
++                    NvU8 z = 0;
++                    if (os_memcpy_to_user(NvP64_VALUE(pApi->params), &z, 1) == NV_OK)
++                        pApi->status = NV_OK;
++                }
 +            }
 +
              if ((pApi->status != NV_OK) && (priv != NULL))
              {
                  //
+diff --git a/src/nvidia/inc/kernel/rmapi/exports.h b/src/nvidia/inc/kernel/rmapi/exports.h
+--- a/src/nvidia/inc/kernel/rmapi/exports.h
++++ b/src/nvidia/inc/kernel/rmapi/exports.h
+@@ -124,4 +124,6 @@ void        Nv04UnmapMemoryDmaWithSecInfo         (NVOS47_PARAMETERS*, API_SECUR
+ void        Nv04DupObjectWithSecInfo              (NVOS55_PARAMETERS*, API_SECURITY_INFO);
+ void        Nv04ShareWithSecInfo                  (NVOS57_PARAMETERS*, API_SECURITY_INFO);
+ 
++NvBool      rmapiIsCmp170hxGpu                    (NvHandle hClient, NvHandle hObject);
++
+ #endif // _EXPORTS_H
+diff --git a/src/nvidia/src/kernel/rmapi/control.c b/src/nvidia/src/kernel/rmapi/control.c
+--- a/src/nvidia/src/kernel/rmapi/control.c
++++ b/src/nvidia/src/kernel/rmapi/control.c
+@@ -43,6 +43,42 @@
+ #include "ctrl/ctrl2080/ctrl2080tmr.h" // NV2080_CTRL_CMD_TIMER_SCHEDULE
+ #include "ctrl/ctrl2080/ctrl2080fb.h" // NV2080_CTRL_CMD_FB_GET_MEM_ALIGNMENT
+ 
++NvBool
++rmapiIsCmp170hxGpu
++(
++    NvHandle hClient,
++    NvHandle hObject
++)
++{
++    NV_STATUS  status;
++    RsClient  *pClient = NULL;
++    NvBool     bBcResource = NV_FALSE;
++    OBJGPU    *pGpu = NULL;
++    NvBool     bApiLockTaken = NV_FALSE;
++    NvU32      devId = 0;
++
++    if (!rmapiLockIsOwner())
++    {
++        status = rmapiLockAcquire(RMAPI_LOCK_FLAGS_READ, RM_LOCK_MODULES_CLIENT);
++        if (status != NV_OK)
++            return NV_FALSE;
++        bApiLockTaken = NV_TRUE;
++    }
++
++    status = serverGetClientUnderLock(&g_resServ, hClient, &pClient);
++    if (status == NV_OK && pClient != NULL)
++    {
++        status = gpuGetByHandle(pClient, hObject, &bBcResource, &pGpu);
++        if (status == NV_OK && pGpu != NULL)
++            devId = pGpu->idInfo.PCIDeviceID >> 16;
++    }
++
++    if (bApiLockTaken)
++        rmapiLockRelease();
++
++    return (devId == 0x20C2) || (devId == 0x2082);
++}
++
+ static NV_STATUS
+ releaseDeferRmCtrlBuffer(RmCtrlDeferredCmd* pRmCtrlDeferredCmd)
+ {
