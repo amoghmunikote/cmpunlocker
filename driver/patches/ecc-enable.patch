@@ -1,6 +1,6 @@
 --- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
-@@ -5869,6 +5869,36 @@
+@@ -5869,6 +5869,39 @@
                        PCIE_LINK_SPEED_OF(statAfter));
          }
  
@@ -10,7 +10,10 @@
 +                { 0x001fa7c8U, 0xffffffffU, 0U },
 +                { 0x001fa7c0U, 0xffffffffU, 0U },
 +                { 0x001fa7d0U, 0xffffffffU, 0U },
-+                { 0x0082380cU, 0x00898888U, 0U },
++                { 0x00823800U, 0xffffffffU, 0U },
++                { 0x0082380cU, 0x00999999U, 0U },
++                { 0x00823810U, 0x003ffebfU, 0U },
++                { 0x0082382cU, 0x0000000fU, 0U },
 +                { 0x009a0470U, 0x00000041U, 1U },
 +                { 0x009a1004U, 0x00000200U, 1U },
 +                { 0x009a033cU, 0x00000003U, 1U },

@@ -129,7 +129,9 @@ unlocks:
   ecc:
     patch: ecc-enable.patch
     registers:
-      feature_override_ecc: { addr: "0x0082380c", value: "0x00898888" }
+      feature_override_ecc:   { addr: "0x0082380c", value: "0x00999999" }
+      feature_override_ecc_1: { addr: "0x00823810", value: "0x003ffebf" }
+      feature_override_ecc_2: { addr: "0x0082382c", value: "0x0000000f" }
       ecc_control:          { addr: "0x009a0470", value: "0x00000041" }
       ltcg_dstcfg0:         { addr: "0x0017e318", value: "0x00000001" }
 
