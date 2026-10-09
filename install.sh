@@ -264,7 +264,7 @@ systemctl daemon-reload
 ok "Removed legacy PCIe retrain helpers"
 
 if (( CONFIGURE_GEN2_SERVICE == 1 )); then
-    chmod +x "${SCRIPT_DIR}/tools/hammer.sh" \
+    chmod +x "${SCRIPT_DIR}/tools/gen2-second-pass.sh" \
              "${SCRIPT_DIR}/tools/service.sh"
     "${SCRIPT_DIR}/tools/service.sh" install
     ok "Early-boot Gen2 retrain service armed (not started in this session)"

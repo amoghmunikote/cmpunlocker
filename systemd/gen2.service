@@ -1,14 +1,14 @@
 [Unit]
-Description=CMP 170HX early-boot PCIe Gen2 retrain
+Description=CMP 170HX bounded PCIe Gen2 second driver pass
 DefaultDependencies=no
 After=sysinit.target
 Before=basic.target multi-user.target graphical.target
-ConditionPathExists=/usr/local/sbin/gen2-hammer
+ConditionPathExists=/usr/local/sbin/gen2-second-pass
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/gen2-hammer
-TimeoutStartSec=45
+ExecStart=/usr/local/sbin/gen2-second-pass auto
+TimeoutStartSec=180
 RemainAfterExit=no
 
 [Install]

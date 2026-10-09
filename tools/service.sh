@@ -6,8 +6,8 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SERVICE_NAME="gen2.service"
 SERVICE_SOURCE="${PROJECT_DIR}/systemd/${SERVICE_NAME}"
 SERVICE_TARGET="/etc/systemd/system/${SERVICE_NAME}"
-HAMMER_SOURCE="${SCRIPT_DIR}/hammer.sh"
-HAMMER_TARGET="/usr/local/sbin/gen2-hammer"
+ACTIVATION_SOURCE="${SCRIPT_DIR}/gen2-second-pass.sh"
+ACTIVATION_TARGET="/usr/local/sbin/gen2-second-pass"
 LOG_FILE="/var/log/gen2.log"
 
 source "${PROJECT_DIR}/common/lib.sh"
@@ -20,7 +20,7 @@ Usage:
   sudo $0 verify    Verify negotiated link speed and show the boot log
   $0 status         Show whether the service is installed and enabled
 
-install never starts the retrain loop in the current session; it only arms
+install never starts activation in the current session; it only arms
 the service for the next boot.
 EOF
 }
@@ -54,7 +54,7 @@ install_service() {
     command -v install >/dev/null || die "install command not found"
     command -v lspci >/dev/null || die "lspci not found (install pciutils)"
     command -v setpci >/dev/null || die "setpci not found (install pciutils)"
-    [[ -f "${HAMMER_SOURCE}" ]] || die "Missing ${HAMMER_SOURCE}"
+    [[ -f "${ACTIVATION_SOURCE}" ]] || die "Missing ${ACTIVATION_SOURCE}"
     [[ -f "${SERVICE_SOURCE}" ]] || die "Missing ${SERVICE_SOURCE}"
 
     mapfile -t gpus < <(supported_gpus)
@@ -69,7 +69,17 @@ install_service() {
     fi
     ok "Installed NVIDIA module contains the Gen2 probe-retrain patch"
 
-    install -m 0755 "${HAMMER_SOURCE}" "${HAMMER_TARGET}"
+    command -v flock >/dev/null || die "flock not found (install util-linux)"
+    command -v fuser >/dev/null || die "fuser not found (install psmisc)"
+    command -v nvidia-smi >/dev/null || die "nvidia-smi not found"
+    command -v modprobe >/dev/null || die "modprobe not found"
+    exec 9>/run/cmp170-gen2-second-pass.lock
+    flock -n 9 || die "Gen2 activation or another service installation is in progress"
+    if systemctl is-active --quiet "${SERVICE_NAME}"; then
+        die "${SERVICE_NAME} is active; wait for it to finish before installing"
+    fi
+    bash -n "${ACTIVATION_SOURCE}"
+    install -m 0755 "${ACTIVATION_SOURCE}" "${ACTIVATION_TARGET}"
     install -m 0644 "${SERVICE_SOURCE}" "${SERVICE_TARGET}"
     systemctl daemon-reload
     systemctl enable "${SERVICE_NAME}" >/dev/null
@@ -81,7 +91,7 @@ install_service() {
 remove_service() {
     require_root
     systemctl disable --now "${SERVICE_NAME}" 2>/dev/null || true
-    rm -f "${SERVICE_TARGET}" "${HAMMER_TARGET}"
+    rm -f "${SERVICE_TARGET}" "${ACTIVATION_TARGET}" /usr/local/sbin/gen2-hammer
     systemctl daemon-reload
     systemctl reset-failed "${SERVICE_NAME}" 2>/dev/null || true
     ok "Removed ${SERVICE_NAME}; cmpunlocker driver and memory unlock were left intact"
