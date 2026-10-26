@@ -61,12 +61,31 @@ PATCH_ORDER=(
     ecc-fbpa-static.patch
     ecc-reporting.patch
 )
+VGPU_PATCH_ORDER=(
+    vgpu-kvm-build.patch
+    vgpu-ga100-host.patch
+    vgpu-umd-version.patch
+)
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
     p="${PATCH_DIR}/${name}"
     [[ -f "${p}" ]] || die "Missing patch: ${p}"
     PATCH_FILES+=("${p}")
 done
+
+VGPU_RUN="${CMPUNLOCKER_VGPU_RUN:-}"
+VGPU_VERSION=""
+if [[ -n "${VGPU_RUN}" ]]; then
+    [[ -f "${VGPU_RUN}" ]] || die "vGPU host package not found: ${VGPU_RUN}"
+    VGPU_VERSION="$(basename "${VGPU_RUN}" | sed -n 's/^NVIDIA-Linux-x86_64-\([0-9.]*\)-vgpu-kvm\.run$/\1/p')"
+    [[ -n "${VGPU_VERSION}" ]] || die "Not an NVIDIA vGPU KVM host package: ${VGPU_RUN}"
+    for name in "${VGPU_PATCH_ORDER[@]}"; do
+        p="${PATCH_DIR}/vgpu/${name}"
+        [[ -f "${p}" ]] || die "Missing patch: ${p}"
+        PATCH_FILES+=("${p}")
+    done
+    info "vGPU host build with userspace from ${VGPU_VERSION}"
+fi
 PATCH_HASH="$(cat "${PATCH_FILES[@]}" | sha256sum | cut -d' ' -f1)"
 
 PROFILE="${CMPUNLOCKER_CARD_PROFILE:-8gb}"
@@ -81,9 +100,17 @@ CONSTANTS="${SCRIPT_DIR}/../common/constants.yaml"
 CONSTANTS_ENV="$(python3 "${SCRIPT_DIR}/../tools/read-constants.py" "${CONSTANTS}" "${PATCH_DIR}" "${SCRIPT_DIR}/build.sh" "${PROFILE}")" || die "common/constants.yaml rejected (see error above)"
 eval "${CONSTANTS_ENV}"
 
-BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:${PATCH_HASH}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
+BUILD_STAMP="${VERSION}:${KVER}:${PROFILE}:${PATCH_HASH}:${VGPU_VERSION}:$(sha256sum "${SCRIPT_DIR}/build.sh" | cut -d' ' -f1)"
 
 mkdir -p "${BUILD_ROOT}"
+
+VGPU_SRC="${BUILD_ROOT}/NVIDIA-Linux-x86_64-${VGPU_VERSION}-vgpu-kvm"
+if [[ -n "${VGPU_RUN}" && ! -d "${VGPU_SRC}" ]]; then
+    info "Extracting ${VGPU_RUN}..."
+    (cd "${BUILD_ROOT}" && sh "${VGPU_RUN}" --extract-only >/dev/null)
+fi
+[[ -z "${VGPU_RUN}" || -f "${VGPU_SRC}/kernel-open/nvidia/nv-vgpu-vfio-interface.c" ]] \
+    || die "${VGPU_RUN} has no open-kernel vGPU sources"
 
 if [[ ! -f "${TARBALL}" ]]; then
     info "Downloading open-gpu-kernel-modules ${VERSION}..."
@@ -117,6 +144,23 @@ else
         patch -p1 < "${PATCH_FILES[$i]}"
     done
     ok "All patches applied"
+
+    if [[ -n "${VGPU_RUN}" ]]; then
+        info "Adding vGPU host support..."
+        cp -r "${VGPU_SRC}/kernel-open/nvidia-vgpu-vfio" kernel-open/
+        cp "${VGPU_SRC}/kernel-open/nvidia/nv-vgpu-vfio-interface.c" kernel-open/nvidia/
+        cp "${VGPU_SRC}/kernel-open/common/inc/nv-vgpu-vfio-interface.h" kernel-open/common/inc/
+        if grep -q 'nv_vmalloc(unsigned long size, gfp_t flags)' kernel-open/common/inc/nv-linux.h; then
+            perl -0pi -e 's/\bnv_vmalloc(\(((?:[^()]++|(?1))*)\))/nv_vmalloc($2, GFP_KERNEL)/g' \
+                kernel-open/nvidia-vgpu-vfio/nvidia-vgpu-vfio.c
+        fi
+        for name in "${VGPU_PATCH_ORDER[@]}"; do
+            info "  vgpu/${name}"
+            patch -p1 < "${PATCH_DIR}/vgpu/${name}"
+        done
+        sed -i "s/\"595\.71\.03\"/\"${VGPU_VERSION}\"/" src/nvidia/arch/nvalloc/unix/src/osapi.c
+        ok "vGPU host support added (userspace ${VGPU_VERSION})"
+    fi
 
     GSP_C="${SRC_DIR}/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c"
     [[ -f "${GSP_C}" ]] || die "Missing ${GSP_C} after patching"
@@ -176,6 +220,7 @@ mkdir -p "${INSTALL_MOD_DIR}"
 printf '%s\n' "${VERSION}" > "${INSTALL_MOD_DIR}/driver_version"
 printf '%s\n' "${PROFILE}" > "${INSTALL_MOD_DIR}/card_profile"
 printf '%s\n' "${UNLOCK_LABEL}" > "${INSTALL_MOD_DIR}/unlock_geometry"
+printf '%s\n' "${VGPU_VERSION}" > "${INSTALL_MOD_DIR}/vgpu_version"
 if [[ -n "${CMPUNLOCKER_GPU_INVENTORY:-}" ]]; then
     printf '%s\n' "${CMPUNLOCKER_GPU_INVENTORY}" > "${INSTALL_MOD_DIR}/gpu_inventory"
     ok "Wrote gpu_inventory ($(echo "${CMPUNLOCKER_GPU_INVENTORY}" | grep -c . || true) GPU(s))"
@@ -207,7 +252,7 @@ mkdir -p "${INSTALL_MOD_DIR}"
 
 mapfile -t KO_FILES < <(find "${SRC_DIR}" -type f \( \
     -name 'nvidia.ko' -o -name 'nvidia-modeset.ko' -o -name 'nvidia-uvm.ko' \
-    -o -name 'nvidia-drm.ko' -o -name 'nvidia-peermem.ko' \) \
+    -o -name 'nvidia-drm.ko' -o -name 'nvidia-peermem.ko' -o -name 'nvidia-vgpu-vfio.ko' \) \
     ! -path '*/conftest/*' | sort -u)
 [[ ${#KO_FILES[@]} -gt 0 ]] || die "No built nvidia*.ko found"
 

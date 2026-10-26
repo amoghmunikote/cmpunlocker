@@ -27,8 +27,8 @@ def versions():
     return [v for v in lines if re.fullmatch(r"\d+\.\d+\.\d+", v)]
 
 
-def patch_order():
+def patch_order(name="PATCH_ORDER"):
     text = (ROOT / "driver" / "build.sh").read_text()
-    m = re.search(r"PATCH_ORDER=\(\n(.*?)\n\)", text, re.S)
-    assert m, "PATCH_ORDER not found in driver/build.sh"
+    m = re.search(r"^%s=\(\n(.*?)\n\)" % name, text, re.S | re.M)
+    assert m, "%s not found in driver/build.sh" % name
     return m.group(1).split()

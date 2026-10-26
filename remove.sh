@@ -78,6 +78,10 @@ systemctl reset-failed cmpunlocker-passthrough.service 2>/dev/null || true
 rm -f /etc/systemd/system/cmpunlocker-passthrough.service \
       /etc/udev/rules.d/99-cmpunlocker-passthrough.rules \
       /etc/modprobe.d/cmpunlocker-vfio.conf
+systemctl stop cmpunlocker-vgpu-mgr.service cmpunlocker-vgpud.service 2>/dev/null || true
+rm -f /etc/systemd/system/cmpunlocker-vgpud.service /etc/systemd/system/cmpunlocker-vgpu-mgr.service \
+      /etc/modprobe.d/cmpunlocker-vgpu.conf /usr/share/nvidia/vgpu/vgpuConfig.xml
+find /usr/lib /usr/lib64 -maxdepth 2 -name libnvidia-vgpu.so -lname "${PASSTHROUGH_LIB}/vgpu/*" -delete 2>/dev/null || true
 rm -rf "${PASSTHROUGH_LIB}"
 udevadm control --reload-rules 2>/dev/null || true
 if grep -q '^cmp_no_bus_reset ' /proc/modules; then

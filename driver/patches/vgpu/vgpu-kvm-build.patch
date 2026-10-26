@@ -1,0 +1,32 @@
+--- a/kernel-open/conftest.sh
++++ b/kernel-open/conftest.sh
+@@ -31,6 +31,7 @@
+ 
+ # VGX_BUILD parameter defined only for VGX builds (vGPU Host driver)
+ # VGX_KVM_BUILD parameter defined only vGPU builds on KVM hypervisor
++VGX_KVM_BUILD=1
+ # GRID_BUILD parameter defined only for GRID builds (GRID Guest driver)
+ # GRID_BUILD_CSP parameter defined only for GRID CSP builds (GRID Guest driver for CSPs)
+ # VGX_DEVICE_VM_BUILD parameter defined only for Device VM VGX build (vGPU Host driver)
+--- a/kernel-open/nvidia/nvidia-sources.Kbuild
++++ b/kernel-open/nvidia/nvidia-sources.Kbuild
+@@ -54,6 +54,7 @@
+ NVIDIA_SOURCES += nvidia/libspdm_ec.c
+ NVIDIA_SOURCES += nvidia/libspdm_x509.c
+ NVIDIA_SOURCES += nvidia/libspdm_rsa_ext.c
++NVIDIA_SOURCES += nvidia/nv-vgpu-vfio-interface.c
+ NVIDIA_SOURCES += nvidia/nvlink_linux.c
+ NVIDIA_SOURCES += nvidia/nvlink_caps.c
+ NVIDIA_SOURCES += nvidia/linux_nvswitch.c
+--- a/kernel-open/nvidia/nv-pci.c
++++ b/kernel-open/nvidia/nv-pci.c
+@@ -347,6 +347,9 @@
+     if (pci_dev->device != 0x20C2 && pci_dev->device != 0x2082)
+         return;
+ 
++    if (pci_dev->is_physfn)
++        return;
++
+     bar0_start = pci_resource_start(pci_dev, 0);
+     if (!bar0_start)
+         return;
