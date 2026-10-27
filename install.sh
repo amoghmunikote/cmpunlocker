@@ -36,8 +36,7 @@ Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
                   unlock is made to survive being handed to vfio-pci, so a VM
                   sees an unlocked card with only a stock NVIDIA driver in it
   --vgpu=<NVIDIA-Linux-x86_64-<ver>-vgpu-kvm.run>
-                  Build the modules as a vGPU host and install the vGPU manager
-                  userspace from that package (see tools/vgpu.sh)
+                  Build the modules as a vGPU host from that package
 
 By default the installer appends intel_iommu=on / amd_iommu=on plus iommu=pt to
 the kernel command line so the IOMMU runs in passthrough mode. This takes effect
@@ -231,9 +230,6 @@ ok "DKMS conflicting modules resolution complete"
 
 step "Building and installing patched modules"
 chmod +x "${SCRIPT_DIR}/driver/build.sh"
-if [[ -n "${VGPU_RUN}" ]]; then
-    "${SCRIPT_DIR}/tools/vgpu.sh" install "${VGPU_RUN}"
-fi
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
 CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
 CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
