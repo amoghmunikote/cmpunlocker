@@ -13,7 +13,6 @@ URL = "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/%s.ta
 CACHE = pathlib.Path(os.environ.get("CMPUNLOCKER_BUILD_DIR", repo.ROOT / "driver" / ".build"))
 PATCHES = repo.ROOT / "driver" / "patches"
 ORDER = repo.patch_order()
-VGPU_ORDER = repo.patch_order("VGPU_PATCH_ORDER")
 VERSIONS = repo.versions()
 assert VERSIONS, "driver/VERSION lists no versions"
 
@@ -31,7 +30,6 @@ def tarball(version):
 
 def test_patch_order_covers_patch_dir():
     assert sorted(ORDER) == sorted(p.name for p in PATCHES.glob("*.patch"))
-    assert sorted(VGPU_ORDER) == sorted(p.name for p in (PATCHES / "vgpu").glob("*.patch"))
 
 
 @pytest.mark.parametrize("version", VERSIONS)
@@ -41,7 +39,7 @@ def test_patches_apply(version):
         subprocess.run(["tar", "-xzf", str(tarball(version)), "-C", tmp], check=True)
         src = pathlib.Path(tmp, "open-gpu-kernel-modules-" + version)
         assert src.is_dir(), os.listdir(tmp)
-        for name in ORDER + ["vgpu/" + n for n in VGPU_ORDER]:
+        for name in ORDER:
             r = subprocess.run(["patch", "-p1", "-i", str(PATCHES / name)], cwd=src,
                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
             assert r.returncode == 0, "%s on %s:\n%s%s" % (name, version, r.stdout, r.stderr)

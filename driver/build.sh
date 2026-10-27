@@ -60,8 +60,6 @@ PATCH_ORDER=(
     ecc-enable.patch
     ecc-fbpa-static.patch
     ecc-reporting.patch
-)
-VGPU_PATCH_ORDER=(
     vgpu-kvm-build.patch
     vgpu-ga100-host.patch
     vgpu-umd-version.patch
@@ -79,11 +77,6 @@ if [[ -n "${VGPU_RUN}" ]]; then
     [[ -f "${VGPU_RUN}" ]] || die "vGPU host package not found: ${VGPU_RUN}"
     VGPU_VERSION="$(basename "${VGPU_RUN}" | sed -n 's/^NVIDIA-Linux-x86_64-\([0-9.]*\)-vgpu-kvm\.run$/\1/p')"
     [[ -n "${VGPU_VERSION}" ]] || die "Not an NVIDIA vGPU KVM host package: ${VGPU_RUN}"
-    for name in "${VGPU_PATCH_ORDER[@]}"; do
-        p="${PATCH_DIR}/vgpu/${name}"
-        [[ -f "${p}" ]] || die "Missing patch: ${p}"
-        PATCH_FILES+=("${p}")
-    done
     info "vGPU host build with userspace from ${VGPU_VERSION}"
 fi
 PATCH_HASH="$(cat "${PATCH_FILES[@]}" | sha256sum | cut -d' ' -f1)"
@@ -140,7 +133,11 @@ else
     info "Applying unlock patches..."
     cd "${SRC_DIR}"
     for i in "${!PATCH_ORDER[@]}"; do
-        info "  ${PATCH_ORDER[$i]}"
+        name="${PATCH_ORDER[$i]}"
+        if [[ "${name}" == vgpu-* && -z "${VGPU_RUN}" ]]; then
+            continue
+        fi
+        info "  ${name}"
         patch -p1 < "${PATCH_FILES[$i]}"
     done
     ok "All patches applied"
@@ -154,10 +151,6 @@ else
             perl -0pi -e 's/\bnv_vmalloc(\(((?:[^()]++|(?1))*)\))/nv_vmalloc($2, GFP_KERNEL)/g' \
                 kernel-open/nvidia-vgpu-vfio/nvidia-vgpu-vfio.c
         fi
-        for name in "${VGPU_PATCH_ORDER[@]}"; do
-            info "  vgpu/${name}"
-            patch -p1 < "${PATCH_DIR}/vgpu/${name}"
-        done
         sed -i "s/\"595\.71\.03\"/\"${VGPU_VERSION}\"/" src/nvidia/arch/nvalloc/unix/src/osapi.c
         ok "vGPU host support added (userspace ${VGPU_VERSION})"
     fi
