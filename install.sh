@@ -431,13 +431,13 @@ done
 echo ""
 echo "Next:"
 echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
-echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
+echo -e "  2. Verify all GPUs: ${CYAN}sudo ./tools.sh status verify${NC}  (cmptools)"
 echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
 echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
 echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
 echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
 if (( CONFIGURE_GEN2_SERVICE == 1 )); then
-    echo -e "  7. Verify negotiated Gen2: ${CYAN}sudo ./tools/service.sh verify${NC}"
+    echo -e "  7. Negotiated Gen2 is included in ${CYAN}sudo ./tools.sh status verify${NC}  (cmptools)"
     echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
 fi
 echo ""
