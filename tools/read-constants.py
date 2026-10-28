@@ -122,7 +122,7 @@ def main():
             if not os.path.isfile(src):
                 problems.append("passthrough module %s: %s missing"
                                 % (mod, src))
-            for rel in ("tools/passthrough.sh", "tools/passthrough-arm.sh"):
+            for rel in ("tools/passthrough-arm.sh",):
                 fp = os.path.join(root, rel)
                 if not os.path.isfile(fp):
                     problems.append("passthrough: %s missing" % rel)

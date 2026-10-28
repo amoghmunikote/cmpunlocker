@@ -29,6 +29,6 @@ def versions():
 
 def patch_order():
     text = (ROOT / "driver" / "build.sh").read_text()
-    m = re.search(r"PATCH_ORDER=\(\n(.*?)\n\)", text, re.S)
+    m = re.search(r"^PATCH_ORDER=\(\n(.*?)\n\)", text, re.S | re.M)
     assert m, "PATCH_ORDER not found in driver/build.sh"
     return m.group(1).split()

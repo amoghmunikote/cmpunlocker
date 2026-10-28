@@ -1,0 +1,12 @@
+--- a/src/nvidia/arch/nvalloc/unix/src/osapi.c
++++ b/src/nvidia/arch/nvalloc/unix/src/osapi.c
+@@ -1210,6 +1210,9 @@
+         relaxed = NV_TRUE;
+     }
+ 
++    if (portStringCompare(pParams->versionString, "595.71.03", NV_RM_API_VERSION_STRING_LENGTH) == 0)
++        return NV_OK;
++
+     for (i = 0; i < NV_RM_API_VERSION_STRING_LENGTH; i++)
+     {
+         clientCh = pParams->versionString[i];

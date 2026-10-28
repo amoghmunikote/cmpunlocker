@@ -123,7 +123,7 @@ def main():
             "cmpunlocker: %s cannot clear %s - it is write protected once set.\n"
             "cmpunlocker: this happens when a VM was killed instead of shut down.\n"
             "cmpunlocker: the next VM will not see the GPU until you run:\n"
-            "cmpunlocker:   sudo ./tools/passthrough.sh restore %s\n"
+            "cmpunlocker:   run the cmptools passthrough tool: ./tools.sh passthrough restore %s\n"
             % (dev, ", ".join(stuck), dev), err=True)
     if changed:
         say("cmpunlocker: %s GSP boot state: %s" % (dev, ", ".join(changed)))

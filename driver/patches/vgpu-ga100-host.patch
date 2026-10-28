@@ -1,0 +1,109 @@
+--- a/src/nvidia/src/kernel/gpu_mgr/gpu_mgr.c
++++ b/src/nvidia/src/kernel/gpu_mgr/gpu_mgr.c
+@@ -1081,7 +1081,8 @@
+ {
+     return (decodePmcBoot42Architecture(pmcBoot42) >= NV_PMC_BOOT_42_ARCHITECTURE_GB100) ||
+            (decodePmcBoot42Architecture(pmcBoot42) == NV_PMC_BOOT_42_ARCHITECTURE_GH100) ||
+-           (decodePmcBoot42Architecture(pmcBoot42) == NV_PMC_BOOT_42_ARCHITECTURE_AD100);
++           (decodePmcBoot42Architecture(pmcBoot42) == NV_PMC_BOOT_42_ARCHITECTURE_AD100) ||
++           (decodePmcBoot42ChipId(pmcBoot42) == NV_PMC_BOOT_42_CHIP_ID_GA100);
+ }
+ 
+ static NvBool _gpumgrIsVgxRmFirmwareDefaultChip(NvU32 pmcBoot42)
+--- a/src/nvidia/src/kernel/gpu/gpu_registry.c
++++ b/src/nvidia/src/kernel/gpu/gpu_registry.c
+@@ -132,7 +132,7 @@
+ 
+     if (pGpu->bSriovEnabled && (IS_GSP_CLIENT(pGpu) || RMCFG_FEATURE_PLATFORM_GSP))
+     {
+-        pGpu->bVgpuGspPluginOffloadEnabled = NV_TRUE;
++        pGpu->bVgpuGspPluginOffloadEnabled = !IsGA100(pGpu);
+     }
+     // Do not enable VGPU-GSP plugin offload on guest for MODS, MODS doesn't support GSP
+     if (IS_VIRTUAL_WITH_SRIOV(pGpu) && !gpuIsWarBug200577889SriovHeavyEnabled(pGpu))
+--- a/src/nvidia/src/kernel/virtualization/kernel_hostvgpudeviceapi.c
++++ b/src/nvidia/src/kernel/virtualization/kernel_hostvgpudeviceapi.c
+@@ -361,7 +361,7 @@
+ 
+     NV_PRINTF(LEVEL_INFO, "%s\n", __FUNCTION__);
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     pKernelHostVgpuDevice = pKernelHostVgpuDeviceApi->pShared->pDevice;
+@@ -385,7 +385,7 @@
+ 
+     NV_PRINTF(LEVEL_INFO, "%s\n", __FUNCTION__);
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     NV_CHECK_OR_RETURN(LEVEL_INFO,
+@@ -506,7 +506,7 @@
+     NvU64       Spa                    = 0;
+     KERNEL_HOST_VGPU_DEVICE *pKernelHostVgpuDevice;
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     if (IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu))
+@@ -630,7 +630,7 @@
+     NvU32 handle;
+     NV_STATUS status = NV_OK;
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     NV_ASSERT_OR_RETURN(pParams->handle == NV_DOORBELL_NOTIFY_LEAF_VF_CPU_PLUGIN_HANDLE,
+@@ -661,7 +661,7 @@
+     OBJGPU   *pGpu = GPU_RES_GET_GPU(pKernelHostVgpuDeviceApi);
+     NV_STATUS status = NV_OK;
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     // NV01_EVENT must have been plugged into this subdevice
+@@ -728,7 +728,7 @@
+     KernelBif *pKernelBif = GPU_GET_KERNEL_BIF(pGpu);
+     NvU32 numAreas = 0, i = 0, j = 0;
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     NV_ASSERT_OR_RETURN(pKernelBif != NULL, NV_ERR_INVALID_STATE);
+@@ -811,7 +811,7 @@
+     KERNEL_HOST_VGPU_DEVICE *pKernelHostVgpuDevice;
+     OBJGPU *pGpu = GPU_RES_GET_GPU(pKernelHostVgpuDeviceApi);
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     pKernelHostVgpuDevice = pKernelHostVgpuDeviceApi->pShared->pDevice;
+@@ -859,7 +859,7 @@
+     RM_API *pRmApi = GPU_GET_PHYSICAL_RMAPI(pGpu);
+     KERNEL_HOST_VGPU_DEVICE *pKernelHostVgpuDevice = pKernelHostVgpuDeviceApi->pShared->pDevice;
+ 
+-    NV_ASSERT_OR_RETURN(!IS_GSP_CLIENT(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
++    NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) || pKernelHostVgpuDeviceApi->pShared->pDevice->bGspPluginTaskInitialized,
+                         NV_ERR_INVALID_STATE);
+ 
+     NV2080_CTRL_VGPU_MGR_INTERNAL_FREE_STATES_PARAMS params;
+--- a/src/nvidia/src/kernel/rmapi/rpc_common.c
++++ b/src/nvidia/src/kernel/rmapi/rpc_common.c
+@@ -170,7 +170,8 @@
+         {
+             if (pDevice->pKernelHostVgpuDevice != NULL)
+             {
+-                NV_ASSERT_OR_RETURN(pDevice->pKernelHostVgpuDevice->bGspPluginTaskInitialized,
++                NV_ASSERT_OR_RETURN(!IS_VGPU_GSP_PLUGIN_OFFLOAD_ENABLED(pGpu) ||
++                                    pDevice->pKernelHostVgpuDevice->bGspPluginTaskInitialized,
+                                     NV_ERR_INVALID_STATE);
+                 pVgpuRpcHeader->u.cpuRmGfid = pDevice->pKernelHostVgpuDevice->gfid;
+             }

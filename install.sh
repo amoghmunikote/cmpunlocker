@@ -12,6 +12,7 @@ PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
 CONFIGURE_PASSTHROUGH=1
+VGPU_RUN=""
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
@@ -19,10 +20,11 @@ for arg in "$@"; do
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         --no-passthrough) CONFIGURE_PASSTHROUGH=0 ;;
+        --vgpu=*) VGPU_RUN="$(realpath "${arg#--vgpu=}")" ;;
         -h|--help)
             cat <<'EOF'
 Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
-                        [--no-passthrough]
+                        [--no-passthrough] [--vgpu=<vgpu-kvm.run>]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
@@ -33,6 +35,8 @@ Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
                   Do not set the cards up for VM passthrough. By default the
                   unlock is made to survive being handed to vfio-pci, so a VM
                   sees an unlocked card with only a stock NVIDIA driver in it
+  --vgpu=<NVIDIA-Linux-x86_64-<ver>-vgpu-kvm.run>
+                  Build the modules as a vGPU host from that package
 
 By default the installer appends intel_iommu=on / amd_iommu=on plus iommu=pt to
 the kernel command line so the IOMMU runs in passthrough mode. This takes effect
@@ -229,6 +233,7 @@ chmod +x "${SCRIPT_DIR}/driver/build.sh"
 CMPUNLOCKER_DRIVER_VERSION="${detected}" \
 CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
 CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
+CMPUNLOCKER_VGPU_RUN="${VGPU_RUN}" \
     "${SCRIPT_DIR}/driver/build.sh"
 ok "Patched modules installed (profile ${CARD_PROFILE})"
 
@@ -291,7 +296,7 @@ cmdline_merge() {
     local token out=()
     for token in ${current}; do
         case "${token}" in
-            intel_iommu=*|amd_iommu=*|iommu=*) continue ;;
+            intel_iommu=*|amd_iommu=*|iommu=*|iomem=*|pci=realloc*) continue ;;
             *) out+=("${token}") ;;
         esac
     done
@@ -382,6 +387,9 @@ if (( CONFIGURE_IOMMU == 0 )); then
     warn "--no-iommu given; leaving kernel command line untouched"
 else
     IOMMU_PARAMS="$(iommu_params_for_cpu)"
+    if [[ -n "${IOMMU_PARAMS}" && -n "${VGPU_RUN}" ]]; then
+        IOMMU_PARAMS="${IOMMU_PARAMS} iomem=relaxed pci=realloc=on"
+    fi
     if [[ -z "${IOMMU_PARAMS}" ]]; then
         warn "Unrecognized CPU vendor — cannot pick IOMMU kernel parameters; skipping"
     elif [[ -f /etc/default/grub ]]; then
@@ -423,13 +431,13 @@ done
 echo ""
 echo "Next:"
 echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
-echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
+echo -e "  2. Verify all GPUs: ${CYAN}sudo ./tools.sh status verify${NC}  (cmptools)"
 echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
 echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
 echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
 echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
 if (( CONFIGURE_GEN2_SERVICE == 1 )); then
-    echo -e "  7. Verify negotiated Gen2: ${CYAN}sudo ./tools/service.sh verify${NC}"
+    echo -e "  7. Negotiated Gen2 is included in ${CYAN}sudo ./tools.sh status verify${NC}  (cmptools)"
     echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
 fi
 echo ""
