@@ -66,7 +66,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  
      {
          // If the new FB layout requires a scrubber ucode to scrub additional space, prepare it now
-@@ -4821,6 +4857,143 @@
+@@ -4821,6 +4857,147 @@
      // Setup arguments for bootstrapping GSP
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPrepareForBootstrap_HAL(pGpu, pKernelGsp, KGSP_BOOT_MODE_NORMAL));
  
@@ -123,9 +123,13 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +                    opened = NV_TRUE;
 +            }
 +            if (!opened)
++            {
 +                NV_PRINTF(LEVEL_ERROR,
 +                          "SEC2_DEBUG: FAILED to open %s after 2 attempts\n",
 +                          plmTable[plmIdx].name);
++                if (plmIdx < 4)
++                    return NV_ERR_INVALID_STATE;
++            }
 +        }
 +
 +        GPU_REG_WR32(pGpu, 0x001fa824U, wpr2Lo);
@@ -210,7 +214,13 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
      // Release the API lock if relaxed locking for parallel init is enabled
      NvBool bRelaxedLocking = _kgspShouldRelaxGspInitLocking(pGpu);
      if (bRelaxedLocking)
-@@ -5662,6 +5816,84 @@
+@@ -4842,3 +5019,4 @@
+-    if (status != NV_OK && !pGpu->pGpuArch->bGpuArchIsZeroFb)
++    if (status != NV_OK && !pGpu->pGpuArch->bGpuArchIsZeroFb &&
++        !_kgspSec2PostblTimingEnabled(pGpu))
+     {
+         // Increment the bootAttempt counter only on failure to boot GSP
+@@ -5662,6 +5840,88 @@
      pKernelGsp->gspRmBootUcodeSize   = 0;
  }
  
@@ -229,7 +239,10 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +{
 +    NvU64 i;
 +
-+    for (i = 0; i + sizeof(NvU32) <= signatureSize; i += sizeof(NvU32))
++    NV_ASSERT_OR_RETURN_VOID(pSignatureVa != NULL &&
++                            signatureSize >= SEC2_POSTBL_TIMING_SIGNATURE_SIZE);
++
++    for (i = 0; i + sizeof(NvU32) <= SEC2_POSTBL_TIMING_SIGNATURE_SIZE; i += sizeof(NvU32))
 +        _kgspSec2PostblTimingPutU32(pSignatureVa, (NvU32)i, SEC2_POSTBL_TIMING_FILL_DWORD);
 +
 +    _kgspSec2PostblTimingPutU32(pSignatureVa, 0x1100, 0x00000007U);
@@ -265,7 +278,8 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +{
 +    NvU8 *pSignatureVa;
 +
-+    if (pKernelGsp->pSignatureMemdesc == NULL)
++    if (pKernelGsp->pSignatureMemdesc == NULL ||
++        memdescGetSize(pKernelGsp->pSignatureMemdesc) < SEC2_POSTBL_TIMING_SIGNATURE_SIZE)
 +        return NV_ERR_INVALID_STATE;
 +
 +    pSignatureVa = memdescMapInternal(pGpu, pKernelGsp->pSignatureMemdesc, TRANSFER_FLAGS_NONE);
@@ -295,7 +309,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  static NV_STATUS
  _kgspCreateSignatureMemdesc
  (
-@@ -5672,6 +5904,9 @@
+@@ -5672,6 +5932,9 @@
  {
      NV_STATUS status = NV_OK;
      NvU8 *pSignatureVa = NULL;
@@ -305,7 +319,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
      NvU64 flags = MEMDESC_FLAGS_NONE;
  
      if (confComputeForceUnprotAlloc(pGpu))
-@@ -5682,7 +5917,7 @@
+@@ -5682,7 +5945,7 @@
      // NOTE: align to 256 because that's the alignment needed for Booter DMA
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
          memdescCreate(&pKernelGsp->pSignatureMemdesc, pGpu,
@@ -314,7 +328,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
              NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags));
  
      memdescTagAlloc(status,
-@@ -5694,8 +5929,48 @@
+@@ -5694,8 +5957,48 @@
          (pSignatureVa != NULL) ? NV_OK : NV_ERR_INSUFFICIENT_RESOURCES,
          fail_alloc);
  
@@ -365,7 +379,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  
      memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
      pSignatureVa = NULL;
-@@ -5709,6 +5984,69 @@
+@@ -5709,6 +6012,69 @@
      memdescDestroy(pKernelGsp->pSignatureMemdesc);
      pKernelGsp->pSignatureMemdesc = NULL;
  
@@ -435,7 +449,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
      return status;
  }
  
-@@ -6612,6 +6950,51 @@
+@@ -6612,6 +6978,51 @@
  {
      GspStaticConfigInfo *pGSCI = GPU_GET_GSP_STATIC_INFO(pGpu);
  
