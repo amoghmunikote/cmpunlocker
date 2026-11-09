@@ -1,4 +1,5 @@
 diff --git a/src/nvidia/arch/nvalloc/unix/src/escape.c b/src/nvidia/arch/nvalloc/unix/src/escape.c
+index 810dfc5..7cac02b 100644
 --- a/src/nvidia/arch/nvalloc/unix/src/escape.c
 +++ b/src/nvidia/arch/nvalloc/unix/src/escape.c
 @@ -53,6 +53,7 @@
@@ -69,6 +70,7 @@ diff --git a/src/nvidia/arch/nvalloc/unix/src/escape.c b/src/nvidia/arch/nvalloc
              {
                  //
 diff --git a/src/nvidia/inc/kernel/rmapi/exports.h b/src/nvidia/inc/kernel/rmapi/exports.h
+index 7c7c1cb..1e83498 100644
 --- a/src/nvidia/inc/kernel/rmapi/exports.h
 +++ b/src/nvidia/inc/kernel/rmapi/exports.h
 @@ -124,4 +124,6 @@ void        Nv04UnmapMemoryDmaWithSecInfo         (NVOS47_PARAMETERS*, API_SECUR
@@ -79,9 +81,10 @@ diff --git a/src/nvidia/inc/kernel/rmapi/exports.h b/src/nvidia/inc/kernel/rmapi
 +
  #endif // _EXPORTS_H
 diff --git a/src/nvidia/src/kernel/rmapi/control.c b/src/nvidia/src/kernel/rmapi/control.c
+index 2597367..29018cc 100644
 --- a/src/nvidia/src/kernel/rmapi/control.c
 +++ b/src/nvidia/src/kernel/rmapi/control.c
-@@ -43,6 +43,42 @@
+@@ -43,6 +43,44 @@
  #include "ctrl/ctrl2080/ctrl2080tmr.h" // NV2080_CTRL_CMD_TIMER_SCHEDULE
  #include "ctrl/ctrl2080/ctrl2080fb.h" // NV2080_CTRL_CMD_FB_GET_MEM_ALIGNMENT
  
@@ -111,7 +114,9 @@ diff --git a/src/nvidia/src/kernel/rmapi/control.c b/src/nvidia/src/kernel/rmapi
 +    if (status == NV_OK && pClient != NULL)
 +    {
 +        status = gpuGetByHandle(pClient, hObject, &bBcResource, &pGpu);
-+        if (status == NV_OK && pGpu != NULL)
++        if (status == NV_OK && pGpu != NULL &&
++            ((pGpu->idInfo.PCIDeviceID >> 16) != 0x2082 ||
++             (GPU_REG_RD32(pGpu, 0x00823814U) & 0x00010000U)))
 +            devId = pGpu->idInfo.PCIDeviceID >> 16;
 +    }
 +

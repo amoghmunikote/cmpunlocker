@@ -81,7 +81,9 @@ systemctl enable cmpunlocker-passthrough.service &>/dev/null
 udevadm control --reload-rules 2>/dev/null || true
 ok "Enabled cmpunlocker-passthrough.service for every boot"
 
-if systemctl start cmpunlocker-passthrough.service 2>/dev/null; then
+if [[ "${CMPUNLOCKER_NO_RELOAD:-0}" == 1 ]]; then
+    info "Not starting it now: the cards are armed at the next boot"
+elif systemctl start cmpunlocker-passthrough.service 2>/dev/null; then
     ok "Armed the cards now (no reboot needed)"
 else
     warn "arming service failed; run: systemctl status cmpunlocker-passthrough"

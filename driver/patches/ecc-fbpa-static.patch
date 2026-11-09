@@ -1,11 +1,14 @@
+diff --git a/src/nvidia/src/kernel/gpu/mem_sys/kern_mem_sys.c b/src/nvidia/src/kernel/gpu/mem_sys/kern_mem_sys.c
+index 4dde500..b66226c 100644
 --- a/src/nvidia/src/kernel/gpu/mem_sys/kern_mem_sys.c
 +++ b/src/nvidia/src/kernel/gpu/mem_sys/kern_mem_sys.c
-@@ -131,6 +131,10 @@
+@@ -130,6 +130,11 @@ kmemsysStatePreInitLocked_IMPL
              pGpu, pKernelMemorySystem, pStaticConfig),
          exit);
-
+ 
 +    if (((pGpu->idInfo.PCIDeviceID >> 16) == 0x20C2) ||
-+        ((pGpu->idInfo.PCIDeviceID >> 16) == 0x2082))
++        (((pGpu->idInfo.PCIDeviceID >> 16) == 0x2082) &&
++         (GPU_REG_RD32(pGpu, 0x00823814U) & 0x00010000U)))
 +        pStaticConfig->bEnabledEccFBPA = NV_TRUE;
 +
  exit:

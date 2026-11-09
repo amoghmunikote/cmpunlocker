@@ -250,6 +250,11 @@ if [[ -n "${resolved}" ]]; then
         warn "Resolved nvidia.ko is not under updates/cmpunlocker/"
     fi
 fi
+if [[ "${CMPUNLOCKER_NO_RELOAD:-0}" == 1 ]]; then
+    warn "Not reloading the driver: the new 10GB ECC setting applies at the next boot"
+    info "Perform cold reboot: shutdown -h now"
+    exit 0
+fi
 info "Attempting to unload NVIDIA modules..."
 systemctl stop nvidia-persistenced 2>/dev/null || true
 systemctl stop nvidia-fabricmanager 2>/dev/null || true

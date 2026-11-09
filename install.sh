@@ -12,6 +12,7 @@ PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
 CONFIGURE_PASSTHROUGH=1
+ECC_10GB_ARG=""
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
@@ -19,10 +20,11 @@ for arg in "$@"; do
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         --no-passthrough) CONFIGURE_PASSTHROUGH=0 ;;
+        --ecc-10gb=*) ECC_10GB_ARG="${arg#--ecc-10gb=}" ;;
         -h|--help)
             cat <<'EOF'
 Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
-                        [--no-passthrough]
+                        [--no-passthrough] [--ecc-10gb=BDF[,BDF...]]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
@@ -33,6 +35,12 @@ Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
                   Do not set the cards up for VM passthrough. By default the
                   unlock is made to survive being handed to vfio-pci, so a VM
                   sees an unlocked card with only a stock NVIDIA driver in it
+  --ecc-10gb=BDF[,BDF...]
+                  Enable HBM DRAM ECC on these 10GB cards (10de:2082), e.g.
+                  --ecc-10gb=0000:81:00.0. Off by default: some 10GB cards fail
+                  GSP boot when ECC is armed (Xid 140). Takes effect after a cold
+                  reboot; the driver is not reloaded during install. 8GB cards
+                  always run ECC.
 
 By default the installer appends intel_iommu=on / amd_iommu=on plus iommu=pt to
 the kernel command line so the IOMMU runs in passthrough mode. This takes effect
@@ -118,6 +126,21 @@ for PCI_LINE in "${PCI_LINES[@]}"; do
 done
 
 [[ ${#GPU_BDFS[@]} -gt 0 ]] || die "No unlockable CMP 170HX GPUs found (need 10de:20c2 and/or 10de:2082)"
+
+ECC_10GB_BDFS=()
+if [[ -n "${ECC_10GB_ARG}" ]]; then
+    IFS=',' read -r -a ECC_10GB_REQ <<< "${ECC_10GB_ARG}"
+    for req in "${ECC_10GB_REQ[@]}"; do
+        bdf="$(normalize_bus_id "${req}")"
+        found=""
+        for i in "${!GPU_BDFS[@]}"; do
+            [[ "${GPU_BDFS[$i]}" == "${bdf}" ]] && found="${GPU_DEVIDS[$i]}"
+        done
+        [[ -n "${found}" ]] || die "--ecc-10gb: no CMP 170HX at ${req}"
+        [[ "${found}" == "2082" ]] || die "--ecc-10gb: ${bdf} is 10de:${found}, not a 10GB card (8GB cards always run ECC)"
+        ECC_10GB_BDFS+=("${bdf}")
+    done
+fi
 if (( COUNT_UNSUPPORTED > 0 )); then
     info "Inventory: ${#GPU_BDFS[@]} unlockable (${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb), ${COUNT_UNSUPPORTED} unsupported"
 else
@@ -223,6 +246,41 @@ for ver in "${SUPPORTED_VERSIONS[@]}"; do
 done
 depmod -a "$(uname -r)"
 ok "DKMS conflicting modules resolution complete"
+
+ECC_10GB_CONF=/etc/modprobe.d/cmp-ecc-10gb.conf
+ECC_10GB_STATUS="off"
+if (( ${#ECC_10GB_BDFS[@]} > 0 )); then
+    ECC_10GB_VALUE=""
+    for bdf in "${ECC_10GB_BDFS[@]}"; do
+        ECC_10GB_VALUE+="pci=${bdf};RmCmpHbmEcc=1;"
+    done
+    ECC_10GB_VALUE="${ECC_10GB_VALUE%;}"
+    other="$(grep -lE '^[[:space:]]*options[[:space:]]+nvidia[[:space:]].*NVreg_RegistryDwordsPerDevice' /etc/modprobe.d/*.conf 2>/dev/null | grep -vxF "${ECC_10GB_CONF}" || true)"
+    if [[ -n "${other}" ]]; then
+        rm -f "${ECC_10GB_CONF}"
+        mapfile -t OTHER_CONFS <<< "${other}"
+        (( ${#OTHER_CONFS[@]} == 1 )) \
+            || die "Multiple files set NVreg_RegistryDwordsPerDevice: ${OTHER_CONFS[*]}. Consolidate them, then rerun install.sh."
+        existing="$(grep -hE 'NVreg_RegistryDwordsPerDevice' "${OTHER_CONFS[@]}" | tr -d '[:space:]')"
+        missing=""
+        for bdf in "${ECC_10GB_BDFS[@]}"; do
+            [[ "${existing}" == *"pci=${bdf};RmCmpHbmEcc=1"* ]] || missing+=";pci=${bdf};RmCmpHbmEcc=1"
+        done
+        [[ -z "${missing}" ]] || die "NVreg_RegistryDwordsPerDevice is already set in ${OTHER_CONFS[*]}. Append \"${missing}\" to that value, then rerun install.sh."
+        ECC_10GB_STATUS="${ECC_10GB_BDFS[*]} (set in ${OTHER_CONFS[*]})"
+        ok "HBM ECC keys found in ${OTHER_CONFS[*]}"
+    else
+        printf 'options nvidia NVreg_RegistryDwordsPerDevice="%s"\n' "${ECC_10GB_VALUE}" > "${ECC_10GB_CONF}"
+        ECC_10GB_STATUS="${ECC_10GB_BDFS[*]}"
+        ok "Wrote ${ECC_10GB_CONF} (HBM ECC on: ${ECC_10GB_BDFS[*]})"
+    fi
+else
+    rm -f "${ECC_10GB_CONF}"
+fi
+# Never let this install load the driver with an HBM ECC key set; it applies at the next boot.
+if grep -qs 'RmCmpHbmEcc=1' /etc/modprobe.d/*.conf; then
+    export CMPUNLOCKER_NO_RELOAD=1
+fi
 
 step "Building and installing patched modules"
 chmod +x "${SCRIPT_DIR}/driver/build.sh"
@@ -409,6 +467,9 @@ banner
 echo "cmpunlocker install finished!"
 echo "Profile: ${CARD_PROFILE}  |  ${#GPU_BDFS[@]} GPU(s): ${COUNT_8GB}× 8gb, ${COUNT_10GB}× 10gb"
 echo "Passthrough: ${PASSTHROUGH_STATUS}"
+if (( COUNT_10GB > 0 )); then
+    echo "10GB HBM ECC: ${ECC_10GB_STATUS}"
+fi
 if [[ -n "${IOMMU_PARAMS}" && "${IOMMU_STATUS}" != "skipped" ]]; then
     echo "IOMMU:   ${IOMMU_PARAMS} (${IOMMU_STATUS})"
 else

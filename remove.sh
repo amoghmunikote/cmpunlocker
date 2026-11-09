@@ -67,6 +67,7 @@ done
 rm -f /etc/systemd/system/cmpretrain.service /usr/local/sbin/retrain.sh
 rm -f /etc/systemd/system/cmp-gen2-retrain.service /usr/local/sbin/cmp-gen2-retrain.sh
 rm -f /etc/modprobe.d/cmp-pcie-gen2.conf
+rm -f /etc/modprobe.d/cmp-ecc-10gb.conf
 systemctl disable --now gen2.service 2>/dev/null || true
 systemctl reset-failed gen2.service 2>/dev/null || true
 rm -f /etc/systemd/system/gen2.service /usr/local/sbin/gen2-hammer
