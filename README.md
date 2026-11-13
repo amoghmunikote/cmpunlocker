@@ -76,6 +76,8 @@ sudo ./install.sh --profile=10gb   # 10GB card → 40GB unlock
 
 Then perform a reboot.
 
+> **Gentoo:** use `sudo ./install.sh --gentoo` — instead of building modules, it installs the unlock patches as [Portage user patches](https://wiki.gentoo.org/wiki//etc/portage/patches) so `emerge nvidia-drivers` builds the unlocked modules itself: see [docs/GENTOO.md](docs/GENTOO.md).
+
 ## What Gets Unlocked
 
 <table>

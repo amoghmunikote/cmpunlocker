@@ -18,6 +18,7 @@ if [[ "${1:-}" != "--yes" && "${1:-}" != "-y" ]]; then
     echo "  - Removes /lib/modules/*/updates/cmpunlocker/"
     echo "  - Removes ${INSTALL_DIR} (legacy install dir, if present)"
     echo "  - Removes cmpretrain service / modprobe Gen2 helpers"
+    echo "  - Removes cmpunlocker Portage user patches (Gentoo); afterwards re-emerge nvidia-drivers"
     echo "  - Removes VM passthrough helpers (service, udev rule, vfio modprobe conf)"
     echo "  - Rebuilds the stock nvidia DKMS modules that install.sh removed"
     echo "  - Reloads stock NVIDIA modules (brief display interruption)"
@@ -150,9 +151,26 @@ for mod_dir in /lib/modules/*/updates/cmpunlocker; do
 done
 [[ "${mod_removed}" -gt 0 ]] || warn "No patched kernel modules found"
 
+info "Removing cmpunlocker Portage user patches (Gentoo)"
+GENTOO_CLEANED=0
+for pdir in /etc/portage/patches/x11-drivers/nvidia-drivers-*/; do
+    [[ -f "${pdir}/.cmpunlocker-manifest" ]] || continue
+    if "${SCRIPT_DIR}/tools/gentoo-patches.sh" --uninstall --dest="${pdir%/}"; then
+        GENTOO_CLEANED=1
+    fi
+done
+if (( GENTOO_CLEANED )); then
+    warn "Portage user patches removed — rebuild stock modules:"
+    warn "  sudo emerge -1v =x11-drivers/nvidia-drivers-<PV>   (then cold reboot)"
+fi
+
 for kernel in "${kernels[@]}"; do
     depmod -a "${kernel}" 2>/dev/null || true
-    restore_stock_modules "${kernel}"
+    if (( GENTOO_CLEANED )); then
+        info "Skipping DKMS stock restore (Gentoo): re-emerge nvidia-drivers as noted above"
+    else
+        restore_stock_modules "${kernel}"
+    fi
 done
 
 info "Rebuilding initramfs so stock modules are packed again..."
@@ -214,7 +232,11 @@ if modprobe nvidia 2>/dev/null; then
     modprobe nvidia-modeset 2>/dev/null || true
     modprobe nvidia-uvm 2>/dev/null || true
     modprobe nvidia-drm 2>/dev/null || true
-    ok "Stock NVIDIA driver loaded: $(modinfo -n nvidia 2>/dev/null || true)"
+    if (( GENTOO_CLEANED )); then
+        warn "Loaded on-disk NVIDIA modules may still be patched — finish with: sudo emerge -1v =x11-drivers/nvidia-drivers-<PV>"
+    else
+        ok "Stock NVIDIA driver loaded: $(modinfo -n nvidia 2>/dev/null || true)"
+    fi
 else
     warn "Could not load NVIDIA driver — reboot to finish cleanup"
 fi

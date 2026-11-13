@@ -12,6 +12,9 @@ PROFILE_OVERRIDE=""
 CONFIGURE_IOMMU=1
 CONFIGURE_GEN2_SERVICE=1
 CONFIGURE_PASSTHROUGH=1
+GENTOO_MODE=0
+GENTOO_EMERGE=0
+FORCE_VERSION=""
 for arg in "$@"; do
     case "${arg}" in
         --profile=8gb|--profile=8GB) PROFILE_OVERRIDE="8gb" ;;
@@ -19,10 +22,14 @@ for arg in "$@"; do
         --no-iommu) CONFIGURE_IOMMU=0 ;;
         --no-gen2-service) CONFIGURE_GEN2_SERVICE=0 ;;
         --no-passthrough) CONFIGURE_PASSTHROUGH=0 ;;
+        --gentoo) GENTOO_MODE=1 ;;
+        --gentoo-emerge) GENTOO_MODE=1; GENTOO_EMERGE=1 ;;
+        --version=*) FORCE_VERSION="${arg#*=}" ;;
         -h|--help)
             cat <<'EOF'
 Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
-                        [--no-passthrough]
+                        [--no-passthrough] [--gentoo] [--gentoo-emerge]
+                        [--version=PV]
 
   --profile=8gb   Force 8GB metadata label (geometry is still chosen per PCI ID)
   --profile=10gb  Force 10GB metadata label (geometry is still chosen per PCI ID)
@@ -33,6 +40,18 @@ Usage: sudo ./install.sh [--profile=8gb|10gb] [--no-iommu] [--no-gen2-service]
                   Do not set the cards up for VM passthrough. By default the
                   unlock is made to survive being handed to vfio-pci, so a VM
                   sees an unlocked card with only a stock NVIDIA driver in it
+  --gentoo        Gentoo mode: do not build kernel modules here. Install the
+                  unlock patches as Portage user patches under
+                  /etc/portage/patches/x11-drivers/nvidia-drivers-<PV>/ and
+                  let 'emerge nvidia-drivers' build the unlocked modules.
+                  System configuration (Gen2, passthrough, IOMMU) still runs.
+                  See docs/GENTOO.md.
+  --gentoo-emerge Implies --gentoo; additionally runs
+                  'emerge -1v =x11-drivers/nvidia-drivers-<PV>' at the end.
+  --version=PV    Force the target driver version instead of auto-detecting
+                  the installed/in-tree one (must be a version cmpunlocker
+                  supports; use when the target comes from an overlay, e.g.
+                  --version=615.71.09, see docs/GENTOO.md).
 
 By default the installer appends intel_iommu=on / amd_iommu=on plus iommu=pt to
 the kernel command line so the IOMMU runs in passthrough mode. This takes effect
@@ -58,8 +77,43 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 
 source "${SCRIPT_DIR}/common/lib.sh"
 
+GENTOO_CATEGORY="x11-drivers"
+GENTOO_PN="nvidia-drivers"
+if (( GENTOO_MODE )); then
+    export CMPUNLOCKER_GENTOO=1
+fi
+
+gentoo_installed_versions() {
+    # Versions of ${GENTOO_CATEGORY}/${GENTOO_PN} present in the Portage
+    # vardb (revisions stripped), oldest first.
+    local dir pf
+    for dir in "/var/db/pkg/${GENTOO_CATEGORY}/${GENTOO_PN}-"*/; do
+        [[ -d "${dir}" ]] || continue
+        pf="${dir%/}"; pf="${pf##*/}"
+        pf="${pf#"${GENTOO_PN}-"}"
+        echo "${pf%-r*}"
+    done | sort -Vu
+}
+
+gentoo_tree_versions() {
+    # Versions with an ebuild in any configured Portage repo (revisions
+    # stripped), oldest first. portageq best_visible is not usable here: it
+    # returns nothing while the package is still keyword-masked for the
+    # user, which is the normal state before the first install.
+    local loc file pv
+    while IFS= read -r loc; do
+        [[ -n "${loc}" ]] || continue
+        for file in "${loc}/${GENTOO_CATEGORY}/${GENTOO_PN}/${GENTOO_PN}-"*.ebuild; do
+            [[ -e "${file}" ]] || continue
+            pv="${file##*/}"; pv="${pv%.ebuild}"
+            pv="${pv#"${GENTOO_PN}-"}"
+            echo "${pv%-r*}"
+        done
+    done < <(portageq repos_config / 2>/dev/null | sed -n 's/^[[:space:]]*location = //p') | sort -Vu
+}
+
 banner
-step_init 7
+step_init $((7 + GENTOO_EMERGE))
 
 step "Verifying root privileges"
 [[ "${EUID}" -eq 0 ]] || die "Run as root: sudo ./install.sh"
@@ -189,48 +243,104 @@ version_supported() {
     return 1
 }
 
-detected=""
-if [[ -r /proc/driver/nvidia/version ]]; then
-    detected="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' /proc/driver/nvidia/version | head -1 || true)"
+GENTOO_IS_INSTALLED=0
+if [[ -n "${FORCE_VERSION:-}" ]]; then
+    version_supported "${FORCE_VERSION}" || die "--version=${FORCE_VERSION} is not supported by cmpunlocker (supported: ${SUPPORTED_VERSIONS_CSV})."
 fi
-if [[ -z "${detected}" ]] && command -v nvidia-smi &>/dev/null; then
-    smi_version="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
-    [[ "${smi_version}" =~ ^[0-9]+(\.[0-9]+)+$ ]] && detected="${smi_version}"
-fi
-if [[ -z "${detected}" ]]; then
-    for cand in "${SUPPORTED_VERSIONS[@]}"; do
-        if [[ -d "/lib/firmware/nvidia/${cand}" ]]; then
-            detected="${cand}"
-            break
+if (( GENTOO_MODE )); then
+    command -v portageq &>/dev/null || die "--gentoo requested but portageq not found — this does not look like a Gentoo system"
+    mapfile -t GENTOO_INSTALLED < <(gentoo_installed_versions)
+    mapfile -t GENTOO_TREE < <(gentoo_tree_versions)
+    detected=""
+    if [[ -n "${FORCE_VERSION:-}" ]]; then
+        # explicit target version (e.g. an overlay ebuild not in the main tree);
+        # detection is skipped, emerge must be run with the same =<PVR>
+        detected="${FORCE_VERSION}"
+        for v in "${GENTOO_INSTALLED[@]:-}"; do
+            [[ "${v}" == "${detected}" ]] && GENTOO_IS_INSTALLED=1
+        done
+        ok "Version forced via --version=${detected}"
+    else
+        for (( idx=${#GENTOO_INSTALLED[@]}-1; idx>=0; idx-- )); do
+            if version_supported "${GENTOO_INSTALLED[idx]}"; then
+                detected="${GENTOO_INSTALLED[idx]}"; GENTOO_IS_INSTALLED=1; break
+            fi
+        done
+        if [[ -z "${detected}" ]]; then
+            for (( idx=${#GENTOO_TREE[@]}-1; idx>=0; idx-- )); do
+                if version_supported "${GENTOO_TREE[idx]}"; then detected="${GENTOO_TREE[idx]}"; break; fi
+            done
         fi
-    done
-    if [[ -z "${detected}" ]]; then
-        fw="$(ls -d /lib/firmware/nvidia/*/ 2>/dev/null | sed 's|.*/nvidia/||;s|/||' | sort -rV | head -1 || true)"
-        detected="${fw}"
     fi
-fi
+    [[ -n "${detected}" ]] || die "No supported nvidia-drivers version found. Installed: ${GENTOO_INSTALLED[*]:-none}; in Portage tree: ${GENTOO_TREE[*]:-none}; cmpunlocker supports: ${SUPPORTED_VERSIONS_CSV}."
+    if (( GENTOO_IS_INSTALLED )); then
+        ok "nvidia-drivers-${detected} is installed and supported"
+    else
+        if [[ -n "${FORCE_VERSION:-}" ]]; then
+            info "nvidia-drivers-${detected} is not installed; build it with 'emerge -1v =${GENTOO_CATEGORY}/${GENTOO_PN}-${detected}' (overlay, see docs/GENTOO.md)"
+        elif (( ${#GENTOO_INSTALLED[@]} )); then
+            warn "Installed nvidia-drivers (${GENTOO_INSTALLED[*]}) not supported by cmpunlocker"
+            info "Will prepare patches for ${GENTOO_CATEGORY}/${GENTOO_PN}-${detected} from the tree; emerge will replace the installed version"
+        else
+            info "nvidia-drivers is not installed yet; preparing patches for ${GENTOO_CATEGORY}/${GENTOO_PN}-${detected} from the tree"
+        fi
+    fi
+    ok "Targeting nvidia-drivers-${detected}"
+else
+    detected=""
+    if [[ -r /proc/driver/nvidia/version ]]; then
+        detected="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' /proc/driver/nvidia/version | head -1 || true)"
+    fi
+    if [[ -z "${detected}" ]] && command -v nvidia-smi &>/dev/null; then
+        smi_version="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
+        [[ "${smi_version}" =~ ^[0-9]+(\.[0-9]+)+$ ]] && detected="${smi_version}"
+    fi
+    if [[ -z "${detected}" ]]; then
+        for cand in "${SUPPORTED_VERSIONS[@]}"; do
+            if [[ -d "/lib/firmware/nvidia/${cand}" ]]; then
+                detected="${cand}"
+                break
+            fi
+        done
+        if [[ -z "${detected}" ]]; then
+            fw="$(ls -d /lib/firmware/nvidia/*/ 2>/dev/null | sed 's|.*/nvidia/||;s|/||' | sort -rV | head -1 || true)"
+            detected="${fw}"
+        fi
+    fi
 
-[[ -n "${detected}" ]] || die "Could not detect an installed NVIDIA driver. Install nvidia-open ${SUPPORTED_VERSIONS_CSV} first."
-version_supported "${detected}" || die "Installed driver is ${detected}, but cmpunlocker requires one of: ${SUPPORTED_VERSIONS_CSV}."
-ok "NVIDIA driver ${detected} is supported"
+    [[ -n "${detected}" ]] || die "Could not detect an installed NVIDIA driver. Install nvidia-open ${SUPPORTED_VERSIONS_CSV} first."
+    version_supported "${detected}" || die "Installed driver is ${detected}, but cmpunlocker requires one of: ${SUPPORTED_VERSIONS_CSV}."
+    ok "NVIDIA driver ${detected} is supported"
+fi
 
 [[ -d "/lib/modules/$(uname -r)/build" ]] || die "Kernel headers missing for $(uname -r). Install linux-headers-$(uname -r) or kernel-devel."
 ok "Kernel headers present for $(uname -r)"
 
-info "Removing conflicting NVIDIA DKMS modules (not all systems have any)"
-for ver in "${SUPPORTED_VERSIONS[@]}"; do
-    dkms remove nvidia/"${ver}" --all 2>/dev/null || true
-done
-depmod -a "$(uname -r)"
-ok "DKMS conflicting modules resolution complete"
+if (( GENTOO_MODE )); then
+    info "Gentoo mode: skipping DKMS conflict handling"
+else
+    info "Removing conflicting NVIDIA DKMS modules (not all systems have any)"
+    for ver in "${SUPPORTED_VERSIONS[@]}"; do
+        dkms remove nvidia/"${ver}" --all 2>/dev/null || true
+    done
+    depmod -a "$(uname -r)"
+    ok "DKMS conflicting modules resolution complete"
+fi
 
-step "Building and installing patched modules"
-chmod +x "${SCRIPT_DIR}/driver/build.sh"
-CMPUNLOCKER_DRIVER_VERSION="${detected}" \
-CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
-CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
-    "${SCRIPT_DIR}/driver/build.sh"
-ok "Patched modules installed (profile ${CARD_PROFILE})"
+if (( GENTOO_MODE )); then
+    step "Installing Portage user patches"
+    "${SCRIPT_DIR}/tools/gentoo-patches.sh" --version="${detected}" --profile="${CARD_PROFILE}" \
+        || die "gentoo-patches.sh failed"
+    ok "Portage user patches installed for ${GENTOO_CATEGORY}/${GENTOO_PN}-${detected}"
+else
+    step "Building and installing patched modules"
+    chmod +x "${SCRIPT_DIR}/driver/build.sh"
+    CMPUNLOCKER_DRIVER_VERSION="${detected}" \
+    CMPUNLOCKER_CARD_PROFILE="${CARD_PROFILE}" \
+    CMPUNLOCKER_GPU_INVENTORY="${CMPUNLOCKER_GPU_INVENTORY}" \
+        "${SCRIPT_DIR}/driver/build.sh"
+    ok "Patched modules installed (profile ${CARD_PROFILE})"
+fi
 
 step "Setting up VM passthrough"
 PASSTHROUGH_STATUS="skipped"
@@ -404,6 +514,13 @@ else
     fi
 fi
 
+if (( GENTOO_MODE == 1 && GENTOO_EMERGE == 1 )); then
+    step "Emerging patched nvidia-drivers"
+    info "sudo emerge -1v =${GENTOO_CATEGORY}/${GENTOO_PN}-${detected}"
+    emerge -1v "=${GENTOO_CATEGORY}/${GENTOO_PN}-${detected}" || die "emerge failed"
+    ok "nvidia-drivers-${detected} emerged with the unlock patches applied"
+fi
+
 step "Done"
 banner
 echo "cmpunlocker install finished!"
@@ -421,18 +538,40 @@ for i in "${!GPU_BDFS[@]}"; do
     printf "  %-16s %-8s %-8s ~%s\n" "${GPU_BDFS[$i]}" "${GPU_DEVIDS[$i]}" "${GPU_PROFILES[$i]}" "${GPU_EXPECTED[$i]}"
 done
 echo ""
-echo "Next:"
-echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
-echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
-echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
-echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
-echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
-echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
-if (( CONFIGURE_GEN2_SERVICE == 1 )); then
-    echo -e "  7. Verify negotiated Gen2: ${CYAN}sudo ./tools/service.sh verify${NC}"
-    echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
+if (( GENTOO_MODE )); then
+    echo "Next:"
+    if (( GENTOO_EMERGE )); then
+        echo -e "  1. Cold reboot: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
+    else
+        echo -e "  1. Build the unlocked driver: ${CYAN}sudo emerge -1v =${GENTOO_CATEGORY}/${GENTOO_PN}-${detected}${NC}"
+        echo -e "  2. Cold reboot: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
+    fi
+    echo -e "  3. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
+    echo -e "  4. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
+    if (( CONFIGURE_GEN2_SERVICE == 1 )); then
+        echo -e "  5. Verify negotiated Gen2: ${CYAN}sudo ./tools/service.sh verify${NC}"
+        echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
+    fi
+    echo ""
+    echo "Kernel upgrades: Portage rebuilds the patched nvidia modules automatically"
+    echo "(emerge @module-rebuild, or USE=dist-kernel with a distribution kernel)."
+    echo "Re-run './install.sh --gentoo' (or tools/passthrough-setup.sh) after a kernel"
+    echo "upgrade to rebuild the cmp_no_bus_reset.ko passthrough helper for the new kernel."
+else
+    echo "Next:"
+    echo -e "  1. Cold reboot recommended: ${CYAN}sudo shutdown -h now${NC}  (then power on)"
+    echo -e "  2. Verify all GPUs: ${CYAN}sudo ./verify.sh${NC}"
+    echo -e "  3. Verify PCIe Gen2: ${CYAN}nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.gen.max --format=csv${NC}  (expect 2,2)"
+    echo -e "  4. Or check manually: ${CYAN}nvidia-smi${NC}"
+    echo -e "  5. Unlock logs: ${CYAN}sudo dmesg | grep SEC2_DEBUG${NC}"
+    echo -e "  6. Verify IOMMU after reboot: ${CYAN}cat /proc/cmdline${NC} and ${CYAN}ls /sys/class/iommu${NC}"
+    if (( CONFIGURE_GEN2_SERVICE == 1 )); then
+        echo -e "  7. Verify negotiated Gen2: ${CYAN}sudo ./tools/service.sh verify${NC}"
+        echo -e "     Recovery boot option: ${CYAN}systemd.mask=gen2.service${NC}"
+    fi
+    echo ""
+    echo "This script removed the nvidia DKMS kernel modules. You will need to re-run this script after each kernel upgrade"
 fi
 echo ""
-echo "This script removed the nvidia DKMS kernel modules. You will need to re-run this script after each kernel upgrade"
 echo "Log saved to: ${LOG_FILE}"
 echo ""

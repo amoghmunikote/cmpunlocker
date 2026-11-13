@@ -61,13 +61,32 @@ install_service() {
     [[ ${#gpus[@]} -gt 0 ]] || die "No supported CMP 170HX found (10de:20c2 / 10de:2082)"
     info "Detected: ${gpus[*]}"
 
-    if [[ ! -f "${module}" ]]; then
-        die "Patched cmpunlocker module not found: ${module}"
+    # Gentoo flow: the ebuild builds the patched nvidia.ko into the distro
+    # module dir (updates/cmpunlocker is not used), and only after
+    # 'emerge nvidia-drivers' has run. Arm anyway in that case.
+    local gentoo_flow=0
+    if [[ "${CMPUNLOCKER_GENTOO:-0}" == "1" ]] ||
+        compgen -G "/etc/portage/patches/x11-drivers/nvidia-drivers-*/.cmpunlocker-manifest" >/dev/null; then
+        gentoo_flow=1
     fi
-    if ! grep -aFq 'CMP Gen2:' "${module}" 2>/dev/null; then
+
+    if [[ -f "${module}" ]] && grep -aFq 'CMP Gen2:' "${module}" 2>/dev/null; then
+        ok "Installed NVIDIA module contains the Gen2 probe-retrain patch"
+    elif (( gentoo_flow )); then
+        local resolved
+        resolved="$(modprobe -n -v nvidia 2>/dev/null | awk '/insmod/ {print $2; exit}')"
+        if [[ -n "${resolved}" && -f "${resolved}" ]] && grep -aFq 'CMP Gen2:' "${resolved}" 2>/dev/null; then
+            ok "Resolved NVIDIA module contains the Gen2 probe-retrain patch: ${resolved}"
+        else
+            warn "Patched nvidia.ko not found yet — on Gentoo it is built by:"
+            warn "  sudo emerge -1v =x11-drivers/nvidia-drivers-<PV>"
+            info "Arming ${SERVICE_NAME} anyway (the retrain loop only touches PCIe registers)."
+        fi
+    elif [[ ! -f "${module}" ]]; then
+        die "Patched cmpunlocker module not found: ${module}"
+    else
         die "Installed module does not contain the Gen2 probe-retrain patch; refusing to arm a useless retrain service"
     fi
-    ok "Installed NVIDIA module contains the Gen2 probe-retrain patch"
 
     install -m 0755 "${HAMMER_SOURCE}" "${HAMMER_TARGET}"
     install -m 0644 "${SERVICE_SOURCE}" "${SERVICE_TARGET}"

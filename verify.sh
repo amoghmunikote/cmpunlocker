@@ -128,6 +128,14 @@ if [[ -r "${INSTALL_MOD_DIR}/card_profile" ]]; then
     info "Installed profile: $(cat "${INSTALL_MOD_DIR}/card_profile") / geometry: $(cat "${INSTALL_MOD_DIR}/unlock_geometry" 2>/dev/null || echo '?')"
 fi
 
+shopt -s nullglob
+for gpd in /etc/portage/patches/x11-drivers/nvidia-drivers-*/; do
+    [[ -f "${gpd}/.cmpunlocker-manifest" ]] || continue
+    gp_pv="${gpd%/}"; gp_pv="${gp_pv##*/nvidia-drivers-}"
+    gp_n="$(grep -c '\.patch$' "${gpd}/.cmpunlocker-manifest" 2>/dev/null || echo '?')"
+    info "Gentoo: Portage user patches installed for nvidia-drivers-${gp_pv} (${gp_n} patch file(s))"
+done
+
 if (( failures > 0 )); then
     echo ""
     die "${failures} GPU(s) failed unlock verification. Cold reboot if modules were just installed."
