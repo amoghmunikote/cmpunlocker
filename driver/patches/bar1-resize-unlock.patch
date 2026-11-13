@@ -1,9 +1,24 @@
 --- a/kernel-open/nvidia/nv-pci.c
 +++ b/kernel-open/nvidia/nv-pci.c
-@@ -337,6 +337,52 @@
+@@ -35,6 +35,8 @@
+ #endif
+ #include <linux/completion.h>
+ #include <linux/iommu.h>
++#include <linux/mutex.h>
++#include <linux/delay.h>
+ #include <linux/kthread.h>
+ 
+ #include <linux/clk.h>
+@@ -484,7 +486,852 @@
  #endif
  }
  
+-static int nv_resize_pcie_bars(struct pci_dev *pci_dev) {
++static int nv_cmp_force_rebar = 1;
++module_param(nv_cmp_force_rebar, int, 0444);
++MODULE_PARM_DESC(nv_cmp_force_rebar,
++    "cmpunlocker: enable the reBAR/BAR1 resize unlock on CMP GPUs (0 = leave the stock NVreg_EnableResizableBar setting alone)");
++
 +static void nv_cmp_unlock_bar1_resize(struct pci_dev *pci_dev)
 +{
 +#if defined(NV_PCI_REBAR_GET_POSSIBLE_SIZES_PRESENT)
@@ -13,6 +28,13 @@
 +
 +    if (pci_dev->device != 0x20C2 && pci_dev->device != 0x2082)
 +        return;
++
++    if (!nv_cmp_force_rebar)
++    {
++        nv_printf(NV_DBG_ERRORS,
++            "NVRM: CMP BAR1: resize unlock skipped (nv_cmp_force_rebar=0)\n");
++        return;
++    }
 +
 +    bar0_start = pci_resource_start(pci_dev, 0);
 +    if (!bar0_start)
@@ -50,18 +72,798 @@
 +#endif
 +}
 +
- static int nv_resize_pcie_bars(struct pci_dev *pci_dev) {
++static DEFINE_MUTEX(nv_cmp_resize_mutex);
++
++static int __nv_resize_pcie_bars(struct pci_dev *pci_dev);
++
++/* Master switch for the SEC2 post-BL timing unlock (patch 01,
++ * kernel_gsp.c); read there via extern.  nv_cmp_postbl=0 boots CMP
++ * cards through the stock GSP path.  Kept in kernel-open code because
++ * the RM core cannot register module parameters. */
++int nv_cmp_postbl = 1;
++module_param(nv_cmp_postbl, int, 0444);
++MODULE_PARM_DESC(nv_cmp_postbl,
++    "cmpunlocker: enable the SEC2 post-BL timing (PLM/CFG1/LMR) unlock on CMP GPUs (0 = stock boot)");
++
++#if defined(NV_PCI_REBAR_GET_POSSIBLE_SIZES_PRESENT)
++
++#define NV_CMP_MAX 8
++#define NV_CMP_MAX_PATH 6
++#define NV_CMP_ALIGN_UP(x, a) (((x) + (typeof(x))(a) - 1) & ~((typeof(x))(a) - 1))
++
++static int nv_cmp_total = -1;
++static int nv_cmp_arrived;
++static int nv_cmp_layout_done;
++static struct pci_dev *nv_cmp_laid_out[NV_CMP_MAX];
++
++static int nv_cmp_is_cmp(const struct pci_dev *d)
++{
++    return d->vendor == 0x10de &&
++           (d->device == 0x20C2 || d->device == 0x2082);
++}
++
++static int nv_cmp_is_mine(const struct pci_dev *d)
++{
++    return nv_cmp_is_cmp(d) &&
++           d->dev.driver != NULL &&
++           d->dev.driver->owner == THIS_MODULE;
++}
++
++static int nv_cmp_is_laid_out(const struct pci_dev *d)
++{
++    int i;
++
++    for (i = 0; i < NV_CMP_MAX; i++)
++        if (nv_cmp_laid_out[i] == (struct pci_dev *)d)
++            return 1;
++    return 0;
++}
++
++static void nv_cmp_add_laid_out(struct pci_dev *d)
++{
++    int i;
++
++    for (i = 0; i < NV_CMP_MAX; i++) {
++        if (nv_cmp_laid_out[i] == d)
++            return;
++        if (nv_cmp_laid_out[i] == NULL) {
++            nv_cmp_laid_out[i] = d;
++            return;
++        }
++    }
++}
++
++/*
++ * Location of the resizable BAR control register for `bar` (negative on
++ * error); also reports the currently programmed size (log2(bytes) - 20).
++ * pci_rebar_set_size() is not exported, so the raw register is written.
++ */
++static int nv_cmp_rebar_ctrl(struct pci_dev *dev, int bar, int *size_log2)
++{
++    int pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_REBAR);
++    int i, nbars;
++    u32 ctrl;
++
++    if (!pos)
++        return -ENODEV;
++
++    pci_read_config_dword(dev, pos + PCI_REBAR_CTRL, &ctrl);
++    nbars = (ctrl & PCI_REBAR_CTRL_NBAR_MASK) >> PCI_REBAR_CTRL_NBAR_SHIFT;
++
++    for (i = 0; i < nbars; i++) {
++        int off = pos + PCI_REBAR_CTRL + i * 8;
++
++        pci_read_config_dword(dev, off, &ctrl);
++        if ((ctrl & PCI_REBAR_CTRL_BAR_IDX) != bar)
++            continue;
++        if (size_log2)
++            *size_log2 = (ctrl & PCI_REBAR_CTRL_BAR_SIZE) >>
++                          PCI_REBAR_CTRL_BAR_SHIFT;
++        return off;
++    }
++
++    return -ENOENT;
++}
++
++static void nv_cmp_rebar_set(struct pci_dev *dev, int ctrl_off, int size_log2)
++{
++    u32 ctrl;
++
++    pci_read_config_dword(dev, ctrl_off, &ctrl);
++    ctrl &= ~PCI_REBAR_CTRL_BAR_SIZE;
++    ctrl |= ((u32)size_log2 << PCI_REBAR_CTRL_BAR_SHIFT) &
++             PCI_REBAR_CTRL_BAR_SIZE;
++    pci_write_config_dword(dev, ctrl_off, ctrl);
++}
++
++/* pci_update_resource() is not exported either. */
++static void nv_cmp_write_bar(struct pci_dev *dev, int resno,
++                             resource_size_t start)
++{
++    struct resource *res = &dev->resource[resno];
++    u32 reg = PCI_BASE_ADDRESS_0 + (resno << 2);
++    u32 lo = (u32)start;
++
++    if (res->flags & IORESOURCE_MEM_64) {
++        lo |= PCI_BASE_ADDRESS_MEM_TYPE_64;
++        if (res->flags & IORESOURCE_PREFETCH)
++            lo |= PCI_BASE_ADDRESS_MEM_PREFETCH;
++    } else if (res->flags & IORESOURCE_PREFETCH) {
++        lo |= PCI_BASE_ADDRESS_MEM_PREFETCH;
++    }
++
++    pci_write_config_dword(dev, reg, lo);
++    if (res->flags & IORESOURCE_MEM_64)
++        pci_write_config_dword(dev, reg + 4, (u32)(((u64)start) >> 32));
++}
++
++/* Mirrors pci_setup_bridge_mmio_pref() for a 64-bit prefetch window. */
++static void nv_cmp_write_bridge(struct pci_dev *bridge,
++                                resource_size_t start, resource_size_t end)
++{
++    u32 l, bu, lu;
++
++    /* Kill the high limit first so the window never transiently
++       covers unrelated space. */
++    pci_write_config_dword(bridge, PCI_PREF_LIMIT_UPPER32, 0);
++
++    l = (u32)((start >> 16) & 0xfff0);
++    l |= (u32)(end & 0xfff00000);
++    bu = (u32)(((u64)start) >> 32);
++    lu = (u32)(((u64)end) >> 32);
++
++    pci_write_config_dword(bridge, PCI_PREF_MEMORY_BASE, l);
++    pci_write_config_dword(bridge, PCI_PREF_BASE_UPPER32, bu);
++    pci_write_config_dword(bridge, PCI_PREF_LIMIT_UPPER32, lu);
++}
++
++struct nv_cmp_win {
++    struct resource *res;          /* == bus->resource[] of the bus above the GPU */
++    struct pci_dev *bridge;
++    int resno;                     /* index in bridge->resource[] */
++    struct resource *claim_parent; /* the window above, or the host window */
++    resource_size_t lo, hi;        /* the placement we want */
++    resource_size_t o_start, o_end;
++    unsigned long o_flags;
++    u16 o_cmd;
++    int depth;                     /* 1 = bridge directly above the GPU */
++    int claimed;
++};
++
++struct nv_cmp_card {
++    struct pci_dev *gpu;
++    int ctrl_off;
++    int old_size;
++    int new_size;
++    resource_size_t sz1, sz3;
++    resource_size_t o1_start, o1_end, o3_start, o3_end;
++    struct nv_cmp_win *win[NV_CMP_MAX_PATH];   /* [0] = bridge above the GPU */
++    u16 o_cmd;
++    int nwin;
++};
++
++static struct nv_cmp_win nv_cmp_wtbl[NV_CMP_MAX * NV_CMP_MAX_PATH];
++static int nv_cmp_nwin;
++
++static struct nv_cmp_win *nv_cmp_win_get(struct resource *res)
++{
++    int i;
++
++    for (i = 0; i < nv_cmp_nwin; i++)
++        if (nv_cmp_wtbl[i].res == res)
++            return &nv_cmp_wtbl[i];
++
++    if (nv_cmp_nwin >= ARRAY_SIZE(nv_cmp_wtbl))
++        return NULL;
++
++    nv_cmp_wtbl[nv_cmp_nwin].res = res;
++    nv_cmp_wtbl[nv_cmp_nwin].lo = ~(resource_size_t)0;
++    nv_cmp_wtbl[nv_cmp_nwin].hi = 0;
++    nv_cmp_wtbl[nv_cmp_nwin].claimed = 0;
++    nv_cmp_wtbl[nv_cmp_nwin].claim_parent = NULL;
++    return &nv_cmp_wtbl[nv_cmp_nwin++];
++}
++
++/*
++ * Every prefetchable bridge window between a CMP and the host bridge.
++ * win[0] is the window of the bridge directly above the GPU, the entry
++ * before the last is the root port's window.
++ */
++static int nv_cmp_collect_path(struct nv_cmp_card *c)
++{
++    struct pci_bus *bus;
++    int depth = 0;
++
++    c->nwin = 0;
++    for (bus = c->gpu->bus; bus && !pci_is_root_bus(bus); bus = bus->parent) {
++        int i, got = 0;
++
++        depth++;
++        if (!bus->self)
++            return -ENODEV;
++        /* The kernel keeps exactly one prefetch window per bridge
++           (bridge->resource[PCI_BRIDGE_RESOURCES + 1]); take the first
++           matching one. */
++        for (i = 0; i < PCI_BRIDGE_RESOURCE_NUM && !got; i++) {
++            struct resource *r = bus->resource[i];
++            struct nv_cmp_win *w;
++
++            if (!r)
++                continue;
++            if ((r->flags & (IORESOURCE_MEM | IORESOURCE_PREFETCH)) !=
++                (IORESOURCE_MEM | IORESOURCE_PREFETCH))
++                continue;
++            if (!(r->flags & IORESOURCE_MEM_64)) {
++                nv_printf(NV_DBG_ERRORS,
++                    "NVRM: CMP BAR1: %s: bridge %s has only a 32-bit prefetch window\n",
++                    pci_name(c->gpu), pci_name(bus->self));
++                return -EOPNOTSUPP;
++            }
++
++            w = nv_cmp_win_get(r);
++            if (!w)
++                return -ENOSPC;
++            w->bridge = bus->self;
++            w->resno = (int)(r - bus->self->resource);
++            w->depth = depth;
++            if (c->nwin >= NV_CMP_MAX_PATH)
++                return -E2BIG;
++            c->win[c->nwin++] = w;
++            got = 1;
++        }
++        if (!got) {
++            nv_printf(NV_DBG_ERRORS,
++                "NVRM: CMP BAR1: %s: no prefetch window on bridge %s\n",
++                pci_name(c->gpu), pci_name(bus->self));
++            return -ENODEV;
++        }
++    }
++
++    return c->nwin ? 0 : -ENODEV;
++}
++
++static struct pci_bus *nv_cmp_root_bus(struct pci_bus *bus)
++{
++    while (bus->parent)
++        bus = bus->parent;
++    return bus;
++}
++
++/*
++ * The biggest host-bridge aperture able to hold `need` bytes; that is
++ * where the whole layout gets placed.  ACPI describes these apertures as
++ * plain (non-prefetchable) memory on most x86 platforms, yet the kernel
++ * allocator itself happily fits 64-bit prefetchable bridge windows into
++ * them, so accept any large enough MEM window here, preferring a
++ * prefetchable one when both exist.
++ */
++static struct resource *nv_cmp_host_window(struct pci_dev *gpu,
++                                           resource_size_t need)
++{
++    struct pci_bus *bus = nv_cmp_root_bus(gpu->bus);
++    struct resource *r, *best = NULL;
++
++    pci_bus_for_each_resource(bus, r) {
++        if (!r || r == &ioport_resource || r == &iomem_resource)
++            continue;
++        if (!(r->flags & IORESOURCE_MEM))
++            continue;
++        if (resource_size(r) < need)
++            continue;
++        if (!best ||
++            resource_size(r) > resource_size(best) ||
++            ((r->flags & IORESOURCE_PREFETCH) &&
++             !(best->flags & IORESOURCE_PREFETCH)))
++            best = r;
++    }
++
++    return best;
++}
++
++static void nv_cmp_dump_host_windows(struct pci_dev *gpu)
++{
++    struct pci_bus *bus = nv_cmp_root_bus(gpu->bus);
++    struct resource *r;
++
++    pci_bus_for_each_resource(bus, r) {
++        if (!r || !(r->flags & IORESOURCE_MEM))
++            continue;
++        nv_printf(NV_DBG_ERRORS,
++            "NVRM: CMP BAR1:   host bus %04x:%02x window [0x%llx-0x%llx] flags=0x%lx\n",
++            pci_domain_nr(bus), bus->number,
++            (u64)r->start, (u64)r->end, (unsigned long)r->flags);
++    }
++}
++
++/* Detach every CMP's BAR1/BAR3 and every bridge prefetch window on the
++   paths; remember the old ranges so they can be restored on failure.
++   Memory decoding stays off until the layout is finished. */
++static void nv_cmp_release_all(struct nv_cmp_card *cards, int ncmp)
++{
++    int i;
++
++    for (i = 0; i < ncmp; i++) {
++        struct pci_dev *gpu = cards[i].gpu;
++        u16 cmd;
++
++        cards[i].o1_start = pci_resource_start(gpu, NV_GPU_BAR1);
++        cards[i].o1_end   = pci_resource_end(gpu, NV_GPU_BAR1);
++        cards[i].o3_start = pci_resource_start(gpu, NV_GPU_BAR3);
++        cards[i].o3_end   = pci_resource_end(gpu, NV_GPU_BAR3);
++
++        pci_read_config_word(gpu, PCI_COMMAND, &cmd);
++        cards[i].o_cmd = cmd;
++        pci_write_config_word(gpu, PCI_COMMAND, cmd & ~PCI_COMMAND_MEMORY);
++
++        pci_release_resource(gpu, NV_GPU_BAR1);
++        pci_release_resource(gpu, NV_GPU_BAR3);
++    }
++
++    for (i = 0; i < nv_cmp_nwin; i++) {
++        struct nv_cmp_win *w = &nv_cmp_wtbl[i];
++        u16 cmd;
++
++        w->o_start  = w->res->start;
++        w->o_end    = w->res->end;
++        w->o_flags  = w->res->flags;
++
++        pci_read_config_word(w->bridge, PCI_COMMAND, &cmd);
++        w->o_cmd = cmd;
++        pci_write_config_word(w->bridge, PCI_COMMAND, cmd & ~PCI_COMMAND_MEMORY);
++
++        if (w->res->parent)
++            release_resource(w->res);
++    }
++}
++
++/* Claim + program every window, top-down, with the kernel's own
++   pci_claim_resource() (it locks the resource tree and reports
++   conflicts). -EBUSY makes the caller retry at the next slot. */
++static int nv_cmp_claim_windows(void)
++{
++    int order[ARRAY_SIZE(nv_cmp_wtbl)];
++    int i, j;
++
++    /* insertion sort, deepest-distance-from-root (largest depth) first */
++    for (i = 0; i < nv_cmp_nwin; i++)
++        order[i] = i;
++    for (i = 1; i < nv_cmp_nwin; i++) {
++        int key = order[i];
++
++        j = i - 1;
++        while (j >= 0 &&
++               nv_cmp_wtbl[order[j]].depth < nv_cmp_wtbl[key].depth) {
++            order[j + 1] = order[j];
++            j--;
++        }
++        order[j + 1] = key;
++    }
++
++    for (i = 0; i < nv_cmp_nwin; i++) {
++        struct nv_cmp_win *w = &nv_cmp_wtbl[order[i]];
++
++        if (w->claimed || !w->claim_parent)
++            continue;
++
++        w->res->start = w->lo;
++        w->res->end   = w->hi;
++        w->res->flags &= ~(IORESOURCE_UNSET | IORESOURCE_STARTALIGN);
++
++        if (pci_claim_resource(w->bridge, w->resno) < 0)
++            return -EBUSY;
++
++        w->claimed = 1;
++        nv_cmp_write_bridge(w->bridge, w->lo, w->hi);
++    }
++
++    return 0;
++}
++
++static void nv_cmp_unclaim_windows(void)
++{
++    int i;
++
++    for (i = 0; i < nv_cmp_nwin; i++) {
++        struct nv_cmp_win *w = &nv_cmp_wtbl[i];
++
++        if (w->claimed) {
++            release_resource(w->res);
++            w->claimed = 0;
++        }
++        w->res->flags = w->o_flags;
++        w->lo = ~(resource_size_t)0;
++        w->hi = 0;
++        w->claim_parent = NULL;
++    }
++}
++
++static int nv_cmp_place_bars(struct nv_cmp_card *cards, int ncmp,
++                             resource_size_t base, resource_size_t win_sz)
++{
++    int i;
++
++    for (i = 0; i < ncmp; i++) {
++        struct nv_cmp_card *c = &cards[i];
++        struct pci_dev *gpu = c->gpu;
++        struct resource *r1 = &gpu->resource[NV_GPU_BAR1];
++        struct resource *r3 = &gpu->resource[NV_GPU_BAR3];
++        resource_size_t slot = base + (resource_size_t)i * win_sz;
++
++        nv_cmp_rebar_set(gpu, c->ctrl_off, c->new_size);
++
++        r1->start = slot;
++        r1->end   = slot + c->sz1 - 1;
++        r1->flags &= ~(IORESOURCE_UNSET | IORESOURCE_STARTALIGN);
++
++        if (pci_claim_resource(gpu, NV_GPU_BAR1) < 0)
++            return -EBUSY;
++
++        if (c->sz3) {
++            r3->start = slot + c->sz1;
++            r3->end   = slot + c->sz1 + c->sz3 - 1;
++            r3->flags &= ~(IORESOURCE_UNSET | IORESOURCE_STARTALIGN);
++
++            if (pci_claim_resource(gpu, NV_GPU_BAR3) < 0) {
++                release_resource(r1);
++                return -EBUSY;
++            }
++        }
++
++        nv_cmp_write_bar(gpu, NV_GPU_BAR1, slot);
++        if (c->sz3)
++            nv_cmp_write_bar(gpu, NV_GPU_BAR3, slot + c->sz1);
++    }
++
++    return 0;
++}
++
++static void nv_cmp_unplace_bars(struct nv_cmp_card *cards, int ncmp)
++{
++    int i;
++
++    for (i = 0; i < ncmp; i++) {
++        struct pci_dev *gpu = cards[i].gpu;
++
++        if (gpu->resource[NV_GPU_BAR1].parent)
++            release_resource(&gpu->resource[NV_GPU_BAR1]);
++        if (gpu->resource[NV_GPU_BAR3].parent)
++            release_resource(&gpu->resource[NV_GPU_BAR3]);
++    }
++}
++
++/* Put everything back at the firmware-provided addresses. */
++static void nv_cmp_rollback(struct nv_cmp_card *cards, int ncmp)
++{
++    int i;
++
++    /* Windows first, top-down (nv_cmp_wtbl order is claim order), so the
++       BARs have a claimed window to go back into. */
++    for (i = 0; i < nv_cmp_nwin; i++) {
++        struct nv_cmp_win *w = &nv_cmp_wtbl[i];
++
++        if (w->res->parent)
++            release_resource(w->res);
++        w->res->start = w->o_start;
++        w->res->end   = w->o_end;
++        w->res->flags = w->o_flags;
++        w->claimed = 0;
++        if (w->o_start <= w->o_end)
++            pci_claim_resource(w->bridge, w->resno);
++        if (w->o_start <= w->o_end)
++            nv_cmp_write_bridge(w->bridge, w->o_start, w->o_end);
++    }
++
++    for (i = 0; i < ncmp; i++) {
++        struct pci_dev *gpu = cards[i].gpu;
++        struct resource *r1 = &gpu->resource[NV_GPU_BAR1];
++        struct resource *r3 = &gpu->resource[NV_GPU_BAR3];
++        struct nv_cmp_win *dsp = cards[i].win[0];
++
++        if (r1->parent)
++            release_resource(r1);
++        if (r3->parent)
++            release_resource(r3);
++
++        nv_cmp_rebar_set(gpu, cards[i].ctrl_off, cards[i].old_size);
++
++        r1->start = cards[i].o1_start;
++        r1->end   = cards[i].o1_end;
++        r3->start = cards[i].o3_start;
++        r3->end   = cards[i].o3_end;
++        r1->flags &= ~IORESOURCE_UNSET;
++        r3->flags &= ~IORESOURCE_UNSET;
++
++        if (dsp->res->parent && cards[i].o1_start)
++            pci_claim_resource(gpu, NV_GPU_BAR1);
++        if (dsp->res->parent && cards[i].o3_start)
++            pci_claim_resource(gpu, NV_GPU_BAR3);
++
++        if (cards[i].o1_start)
++            nv_cmp_write_bar(gpu, NV_GPU_BAR1, cards[i].o1_start);
++        if (cards[i].o3_start)
++            nv_cmp_write_bar(gpu, NV_GPU_BAR3, cards[i].o3_start);
++    }
++
++    for (i = 0; i < nv_cmp_nwin; i++)
++        pci_write_config_word(nv_cmp_wtbl[i].bridge, PCI_COMMAND,
++                              nv_cmp_wtbl[i].o_cmd);
++    for (i = 0; i < ncmp; i++)
++        pci_write_config_word(cards[i].gpu, PCI_COMMAND, cards[i].o_cmd);
++}
++
++static int nv_cmp_resize_all(void)
++{
++    static struct nv_cmp_card cards[NV_CMP_MAX];
++    resource_size_t win_sz = 0, span, base, next_base;
++    struct resource *host;
++    struct pci_dev *d = NULL;
++    int ncmp = 0, i, j, ret, attempt;
++
++    for_each_pci_dev(d)
++        if (nv_cmp_is_mine(d) && ncmp < NV_CMP_MAX)
++            cards[ncmp++].gpu = d;
++
++    nv_printf(NV_DBG_ERRORS,
++        "NVRM: CMP BAR1: coordinated layout for %d CMP device(s)\n", ncmp);
++    if (!ncmp)
++        return 0;
++
++    {
++        struct pci_bus *rb0 = nv_cmp_root_bus(cards[0].gpu->bus);
++
++        for (i = 1; i < ncmp; i++)
++            if (nv_cmp_root_bus(cards[i].gpu->bus) != rb0) {
++                nv_printf(NV_DBG_ERRORS,
++                    "NVRM: CMP BAR1: cards sit under different host bridges; aborting\n");
++                return -EXDEV;
++            }
++    }
++
++    nv_cmp_nwin = 0;
++    for (i = 0; i < ncmp; i++) {
++        struct pci_dev *gpu = cards[i].gpu;
++        u32 sizes;
++
++        cards[i].ctrl_off = nv_cmp_rebar_ctrl(gpu, NV_GPU_BAR1,
++                                              &cards[i].old_size);
++        if (cards[i].ctrl_off < 0) {
++            nv_printf(NV_DBG_ERRORS,
++                "NVRM: CMP BAR1: %s: no reBAR capability\n", pci_name(gpu));
++            return -ENODEV;
++        }
++
++        nv_cmp_unlock_bar1_resize(gpu);
++
++        sizes = pci_rebar_get_possible_sizes(gpu, NV_GPU_BAR1);
++        if (!sizes) {
++            nv_printf(NV_DBG_ERRORS,
++                "NVRM: CMP BAR1: %s: no resizable BAR1 sizes\n",
++                pci_name(gpu));
++            return -ENODEV;
++        }
++        cards[i].new_size = fls(sizes) - 1;
++        cards[i].sz1 = pci_rebar_size_to_bytes(cards[i].new_size);
++        cards[i].sz3 = resource_size(&gpu->resource[NV_GPU_BAR3]);
++
++        /* One window per card, a multiple of the BAR1 alignment, so the
++           kernel's greedy allocator (and our own top-down claim below)
++           can place every card's window without alignment gaps. */
++        {
++            resource_size_t ws = NV_CMP_ALIGN_UP(cards[i].sz1 + cards[i].sz3,
++                                                 cards[i].sz1);
++            if (ws > win_sz)
++                win_sz = ws;
++        }
++
++        ret = nv_cmp_collect_path(&cards[i]);
++        if (ret) {
++            nv_printf(NV_DBG_ERRORS,
++                "NVRM: CMP BAR1: %s: cannot collect bridge windows (%d)\n",
++                pci_name(gpu), ret);
++            return ret;
++        }
++    }
++
++    span = win_sz * ncmp;
++    host = nv_cmp_host_window(cards[0].gpu, span);
++    if (!host) {
++        nv_printf(NV_DBG_ERRORS,
++            "NVRM: CMP BAR1: no host window >= %u MiB for %d card(s); candidates:\n",
++            (u32)(span >> 20), ncmp);
++        nv_cmp_dump_host_windows(cards[0].gpu);
++        return -ENOSPC;
++    }
++
++    nv_printf(NV_DBG_ERRORS,
++        "NVRM: CMP BAR1: host window [0x%llx-0x%llx], %u MiB window x %d\n",
++        (u64)host->start, (u64)host->end, (u32)(win_sz >> 20), ncmp);
++
++    nv_cmp_release_all(cards, ncmp);
++
++    ret = -ENOSPC;
++    next_base = NV_CMP_ALIGN_UP(host->start, win_sz);
++    for (attempt = 0; attempt < 16; attempt++) {
++        base = next_base;
++
++        if (base + span - 1 > host->end) {
++            ret = -ENOSPC;
++            break;
++        }
++
++        /* Per card: the whole slot is inside every window on its path. */
++        for (i = 0; i < ncmp; i++) {
++            struct nv_cmp_card *c = &cards[i];
++            resource_size_t slot = base + (resource_size_t)i * win_sz;
++
++            for (j = c->nwin - 1; j >= 0; j--) {   /* top-down */
++                struct nv_cmp_win *w = c->win[j];
++
++                if (!w->claim_parent)
++                    w->claim_parent = (j == c->nwin - 1) ? host
++                                                         : c->win[j + 1]->res;
++                if (slot < w->lo)
++                    w->lo = slot;
++                if (slot + win_sz - 1 > w->hi)
++                    w->hi = slot + win_sz - 1;
++            }
++        }
++
++        ret = nv_cmp_claim_windows();
++        if (ret == -EBUSY) {
++            nv_cmp_unclaim_windows();
++            next_base = base + win_sz;
++            if (next_base + span - 1 > host->end) {
++                ret = -ENOSPC;
++                break;
++            }
++            continue;
++        }
++        if (ret)
++            break;
++
++        ret = nv_cmp_place_bars(cards, ncmp, base, win_sz);
++        if (ret == -EBUSY) {
++            nv_cmp_unplace_bars(cards, ncmp);
++            nv_cmp_unclaim_windows();
++            next_base = base + win_sz;
++            if (next_base + span - 1 > host->end) {
++                ret = -ENOSPC;
++                break;
++            }
++            continue;
++        }
++        break;
++    }
++
++    if (ret) {
++        nv_printf(NV_DBG_ERRORS,
++            "NVRM: CMP BAR1: layout failed (%d); restoring firmware placement\n",
++            ret);
++        nv_cmp_rollback(cards, ncmp);   /* also restores PCI_COMMAND */
++        return ret;
++    }
++
++    /* Re-enable memory decoding on the whole chain. */
++    for (i = 0; i < nv_cmp_nwin; i++)
++        pci_write_config_word(nv_cmp_wtbl[i].bridge, PCI_COMMAND,
++                              nv_cmp_wtbl[i].o_cmd);
++    for (i = 0; i < ncmp; i++)
++        pci_write_config_word(cards[i].gpu, PCI_COMMAND, cards[i].o_cmd);
++
++    for (i = 0; i < ncmp; i++) {
++        struct pci_dev *gpu = cards[i].gpu;
++        resource_size_t sz = pci_resource_len(gpu, NV_GPU_BAR1);
++
++        nv_printf(NV_DBG_ERRORS,
++            "NVRM: CMP BAR1: %s BAR1 = %llu MiB @ 0x%llx\n",
++            pci_name(gpu), (u64)sz >> 20,
++            (u64)pci_resource_start(gpu, NV_GPU_BAR1));
++        nv_cmp_add_laid_out(gpu);
++    }
++
++    return 0;
++}
++
++/*
++ * 615.x probes each GPU in its own "nv-probe-<pci>" kthread, so with two
++ * CMP cards the BAR1 resizes used to run concurrently and corrupt the
++ * shared resource tree.  Simply serializing is not enough either: the
++ * kernel sizes a bridge window as the plain sum of its children's sizes
++ * (pbus_size_mem()), but places each child aligned to its own alignment;
++ * with two CMPs behind one switch each leaf window is BAR1(64 GiB) +
++ * BAR3(32 MiB) with 64 GiB alignment, so the parent would need ~192 GiB
++ * of span while the kernel only ever gives it the 128 GiB sum - the
++ * second card can never be assigned and steps down to 64 MB.
++ *
++ * So for CMPs the whole chain is re-laid out by hand in one pass while
++ * every CMP probe is parked at this point: detach every CMP's BAR1/BAR3
++ * and every prefetch bridge window on the paths, compute a placement
++ * (one window per card, sized to a multiple of the BAR1 alignment, so
++ * the slots tile the ancestor windows gaplessly), claim it top-down in
++ * the resource tree and program bridges, reBAR size fields and BARs.
++ * Nothing runs the kernel's allocator here, and no card can be inside
++ * RM init while another card's BARs are detached.  On failure
++ * everything is restored to the firmware placement and the cards come
++ * up at their stock size.
++ */
++static int nv_resize_pcie_bars(struct pci_dev *pci_dev)
++{
++    int r = 0;
++
++    if (!nv_cmp_is_mine(pci_dev))
++        return __nv_resize_pcie_bars(pci_dev);
++
++    if (!nv_cmp_force_rebar) {
++        nv_cmp_unlock_bar1_resize(pci_dev);
++        return __nv_resize_pcie_bars(pci_dev);
++    }
++
++    mutex_lock(&nv_cmp_resize_mutex);
++    if (nv_cmp_total < 0) {
++        struct pci_dev *d = NULL;
++
++        /* Count by device id, not by binding: every CMP PCI enumeration
++           has finished long before this module loads, while the probe
++           kthreads bind the cards one by one.  A card not bound to us
++           (e.g. vfio-pci passthrough) must not hold the barrier open. */
++        nv_cmp_total = 0;
++        for_each_pci_dev(d)
++            if (nv_cmp_is_cmp(d) &&
++                (!d->dev.driver || d->dev.driver->owner == THIS_MODULE))
++                nv_cmp_total++;
++    }
++    nv_cmp_arrived++;
++    mutex_unlock(&nv_cmp_resize_mutex);
++
++    /* Barrier: let every CMP probe reach this point before any BARs are
++       touched (bounded; a slow probe must not stall boot). */
++    {
++        int waited;
++
++        for (waited = 0; waited < 3000; waited += 25) {
++            int ready;
++
++            mutex_lock(&nv_cmp_resize_mutex);
++            ready = (nv_cmp_arrived >= nv_cmp_total);
++            mutex_unlock(&nv_cmp_resize_mutex);
++            if (ready)
++                break;
++            msleep(25);
++        }
++    }
++
++    mutex_lock(&nv_cmp_resize_mutex);
++    if (nv_cmp_layout_done) {
++        if (!nv_cmp_is_laid_out(pci_dev))
++            nv_printf(NV_DBG_ERRORS,
++                "NVRM: CMP BAR1: %s appeared after the resize pass; leaving its BARs alone\n",
++                pci_name(pci_dev));
++    } else {
++        r = nv_cmp_resize_all();
++        nv_cmp_layout_done = 1;
++        /* The firmware placement was restored; the card is usable. */
++        if (r)
++            r = 0;
++    }
++    mutex_unlock(&nv_cmp_resize_mutex);
++
++    return r;
++}
++
++#else /* !NV_PCI_REBAR_GET_POSSIBLE_SIZES_PRESENT */
++
++static int nv_resize_pcie_bars(struct pci_dev *pci_dev)
++{
++    return __nv_resize_pcie_bars(pci_dev);
++}
++
++#endif /* NV_PCI_REBAR_GET_POSSIBLE_SIZES_PRESENT */
++
++static int __nv_resize_pcie_bars(struct pci_dev *pci_dev) {
  #if defined(NV_PCI_REBAR_GET_POSSIBLE_SIZES_PRESENT)
      u16 cmd;
-@@ -2087,12 +2133,21 @@
-         !nv_pci_validate_bars(pci_dev, /* only_bar0 = */ NV_FALSE))
-         goto err_zero_dev;
- 
-+    nv_cmp_unlock_bar1_resize(pci_dev);
-+
-     if (nv_resize_pcie_bars(pci_dev)) {
-         nv_printf(NV_DBG_ERRORS,
-             "NVRM: Fatal Error while attempting to resize PCIe BARs.\n");
+     int r, old_size, requested_size;
+@@ -2357,6 +3204,13 @@
          goto err_zero_dev;
      }
  

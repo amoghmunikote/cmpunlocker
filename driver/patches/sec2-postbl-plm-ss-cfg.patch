@@ -1,15 +1,20 @@
-diff -Naur a/src/nvidia/generated/g_kernel_gsp_nvoc.h b/src/nvidia/generated/g_kernel_gsp_nvoc.h
+diff -Naur c/src/nvidia/generated/g_kernel_gsp_nvoc.h b/src/nvidia/generated/g_kernel_gsp_nvoc.h
 --- a/src/nvidia/generated/g_kernel_gsp_nvoc.h
 +++ b/src/nvidia/generated/g_kernel_gsp_nvoc.h
-@@ -545,2 +545,4 @@
+@@ -572,6 +572,8 @@
+     NvU8 *pGspRmBootUcodeImage;
+     RM_RISCV_UCODE_DESC *pGspRmBootUcodeDesc;
      MEMORY_DESCRIPTOR *pGspUCodeRadix3Descriptor;
 +    NvU8 *pStockSignatureData;
 +    NvU64 stockSignatureSize;
      MEMORY_DESCRIPTOR *pSignatureMemdesc;
-diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
+     NvU32 regTableSize;
+     PACKED_REGISTRY_TABLE *pRegTable;
+diff -Naur c/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 --- a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
 +++ b/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c
-@@ -101,4 +101,30 @@
+@@ -112,6 +112,75 @@
+ #include "ctrl/ctrl208f/ctrl208fucodeinstrumentation.h"
  #endif
  
 +#define SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID   0x20C2
@@ -17,6 +22,11 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +#define SEC2_POSTBL_TIMING_SIGNATURE_SIZE          0x0000f800ULL
 +#define SEC2_POSTBL_TIMING_FILL_DWORD              0x000004a7U
 +#define SEC2_POSTBL_TIMING_DMEM_PATH               "/lib/firmware/nvidia/ga100/gsp/dmem.bin"
++#define SEC2_POSTBL_TIMING_DISABLE_PATH            "/etc/nvidia/cmp-postbl.disabled"
++
++// Set at module load (kernel-open/nv-pci.c): 0 boots CMP cards through
++// the stock GSP path; primary escape hatch, filesystem-independent.
++extern int nv_cmp_postbl;
 +
 +#ifdef GSP_FW_WPR_META_V1_H_
 +#define SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)      ((pKernelGsp)->pWprMetaV1)
@@ -33,14 +43,53 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +static NvBool
 +_kgspSec2PostblTimingEnabled(OBJGPU *pGpu)
 +{
++    static NvBool bOffChecked = NV_FALSE;
++    static NvBool bOff = NV_FALSE;
++    void *pProbeHandle = NULL;
 +    NvU32 devId = pGpu->idInfo.PCIDeviceID >> 16;
-+    return (devId == SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID ||
-+            devId == SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID);
++
++    if (devId != SEC2_POSTBL_TIMING_CMP_170HX_8GB_PCI_DEVICE_ID &&
++        devId != SEC2_POSTBL_TIMING_CMP_170HX_10GB_PCI_DEVICE_ID)
++        return NV_FALSE;
++
++    // Escape hatches for bisecting unlock failures without rebuilding the
++    // driver; CMP cards then boot through the stock GSP path (stock
++    // signature, no PLM loop, no CFG1/LMR geometry write; the guarded
++    // Gen2/ECC pre-booter blocks below are skipped as well) and stay at
++    // their locked capacity.  Primary: module parameter nv_cmp_postbl=0
++    // (e.g. "options nvidia nv_cmp_postbl=0" in /etc/modprobe.d/).  The
++    // marker file /etc/nvidia/cmp-postbl.disabled is a best-effort
++    // fallback: this runs in the nv-probe kthread, where the OS layer
++    // may not be able to resolve paths (os_open_readonly_file() maps
++    // every failure to NV_ERR_OPERATING_SYSTEM), so do not rely on it.
++    // Checked once per module load (reload/reboot to toggle).
++    if (!bOffChecked)
++    {
++        NvBool bMarker = NV_FALSE;
++        NV_STATUS probeStatus = NV_ERR_NOT_SUPPORTED;
++
++        bOffChecked = NV_TRUE;
++        probeStatus = os_open_readonly_file(SEC2_POSTBL_TIMING_DISABLE_PATH, &pProbeHandle);
++        if (probeStatus == NV_OK)
++        {
++            os_close_file(pProbeHandle);
++            bMarker = NV_TRUE;
++        }
++        bOff = (nv_cmp_postbl == 0) || bMarker;
++        NV_PRINTF(LEVEL_ERROR,
++                  "SEC2_DEBUG: postbl %s (param=%d marker %s status=0x%x ctx=0x%x)\n",
++                  bOff ? "DISABLED" : "enabled", nv_cmp_postbl,
++                  bMarker ? "present" : "absent",
++                  probeStatus, os_get_current_process_flags());
++    }
++
++    return !bOff;
 +}
 +
  #include "crashcat/crashcat_report.h"
  
-@@ -4802,7 +4828,7 @@
+ #include "kernel/gpu/oob/kernel_oob.h"
+@@ -5436,7 +5505,7 @@
      *pbRetry = NV_FALSE;
  
      // Fail early if WPR2 is up
@@ -49,11 +98,10 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
          (!pGpu->getProperty(pGpu, PDB_PROP_GPU_PREINITIALIZED_WPR_REGION)))
      {
          NV_PRINTF(LEVEL_ERROR, "unexpected WPR2 already up, cannot proceed with booting GSP\n");
-@@ -4812,6 +4838,16 @@
- 
+@@ -5453,6 +5522,16 @@
      // Populate WPR meta structure (requires knowing FB size on dGPU, which depends on GFW_BOOT)
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPopulateWprMeta_HAL(pGpu, pKernelGsp, pGspFw));
-+
+ 
 +    if (_kgspSec2PostblTimingEnabled(pGpu))
 +    {
 +        NV_PRINTF(LEVEL_ERROR,
@@ -63,10 +111,11 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwWprEnd,
 +                  SEC2_POSTBL_TIMING_WPR_META(pKernelGsp)->gspFwHeapSize);
 +    }
- 
++
      {
          // If the new FB layout requires a scrubber ucode to scrub additional space, prepare it now
-@@ -4821,6 +4857,143 @@
+         NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
+@@ -5462,6 +5541,143 @@
      // Setup arguments for bootstrapping GSP
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR, kgspPrepareForBootstrap_HAL(pGpu, pKernelGsp, KGSP_BOOT_MODE_NORMAL));
  
@@ -210,7 +259,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
      // Release the API lock if relaxed locking for parallel init is enabled
      NvBool bRelaxedLocking = _kgspShouldRelaxGspInitLocking(pGpu);
      if (bRelaxedLocking)
-@@ -5662,6 +5816,84 @@
+@@ -6343,6 +6559,84 @@
      pKernelGsp->gspRmBootUcodeSize   = 0;
  }
  
@@ -295,7 +344,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  static NV_STATUS
  _kgspCreateSignatureMemdesc
  (
-@@ -5672,6 +5904,9 @@
+@@ -6353,6 +6647,9 @@
  {
      NV_STATUS status = NV_OK;
      NvU8 *pSignatureVa = NULL;
@@ -305,7 +354,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
      NvU64 flags = MEMDESC_FLAGS_NONE;
  
      if (confComputeForceUnprotAlloc(pGpu))
-@@ -5682,7 +5917,7 @@
+@@ -6363,7 +6660,7 @@
      // NOTE: align to 256 because that's the alignment needed for Booter DMA
      NV_CHECK_OK_OR_RETURN(LEVEL_ERROR,
          memdescCreate(&pKernelGsp->pSignatureMemdesc, pGpu,
@@ -314,7 +363,7 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
              NV_TRUE, ADDR_SYSMEM, NV_MEMORY_CACHED, flags));
  
      memdescTagAlloc(status,
-@@ -5694,8 +5929,48 @@
+@@ -6375,8 +6672,48 @@
          (pSignatureVa != NULL) ? NV_OK : NV_ERR_INSUFFICIENT_RESOURCES,
          fail_alloc);
  
@@ -365,13 +414,10 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
  
      memdescUnmapInternal(pGpu, pKernelGsp->pSignatureMemdesc, 0);
      pSignatureVa = NULL;
-@@ -5709,6 +5984,69 @@
-     memdescDestroy(pKernelGsp->pSignatureMemdesc);
-     pKernelGsp->pSignatureMemdesc = NULL;
+@@ -6393,6 +6730,69 @@
+     return status;
+ }
  
-+    return status;
-+}
-+
 +NV_STATUS
 +kgspSec2PostblTimingRebuildStockSignature(OBJGPU *pGpu, KernelGsp *pKernelGsp)
 +{
@@ -432,10 +478,13 @@ diff -Naur a/src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c b/src/nvidia/src/kernel/
 +    memdescDestroy(pKernelGsp->pSignatureMemdesc);
 +    pKernelGsp->pSignatureMemdesc = NULL;
 +
-     return status;
- }
- 
-@@ -6612,6 +6950,51 @@
++    return status;
++}
++
+ /*!
+  * Verify that the version embedded in the .fwversion section of the ELF given
+  * by pElfData and elfDataSize matches our NV_VERSION_STRING.
+@@ -7431,6 +7831,51 @@
  {
      GspStaticConfigInfo *pGSCI = GPU_GET_GSP_STATIC_INFO(pGpu);
  
