@@ -32,6 +32,12 @@ def test_patch_order_covers_patch_dir():
     assert sorted(ORDER) == sorted(p.name for p in PATCHES.glob("*.patch"))
 
 
+def test_per_version_patch_dirs_are_supported_versions():
+    for d in PATCHES.iterdir():
+        if d.is_dir():
+            assert d.name in VERSIONS, "driver/patches/%s/ is not a supported version" % d.name
+
+
 @pytest.mark.parametrize("version", VERSIONS)
 def test_patches_apply(version):
     assert shutil.which("patch"), "GNU patch is not installed"
@@ -39,7 +45,8 @@ def test_patches_apply(version):
         subprocess.run(["tar", "-xzf", str(tarball(version)), "-C", tmp], check=True)
         src = pathlib.Path(tmp, "open-gpu-kernel-modules-" + version)
         assert src.is_dir(), os.listdir(tmp)
-        for name in ORDER:
+        extras = sorted(p.name for p in (PATCHES / version).glob("*.patch"))
+        for name in list(ORDER) + extras:
             r = subprocess.run(["patch", "-p1", "-i", str(PATCHES / name)], cwd=src,
                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
             assert r.returncode == 0, "%s on %s:\n%s%s" % (name, version, r.stdout, r.stderr)

@@ -1,0 +1,69 @@
+diff -Naur a/kernel-open/conftest.sh b/kernel-open/conftest.sh
+--- a/kernel-open/conftest.sh
++++ b/kernel-open/conftest.sh
+@@ -5385,6 +5385,33 @@
+             "
+ 
+             compile_check_conftest "$CODE" "NV_DMEM_CGROUP_PRESENT" "" "types"
++        ;;
++
++        dmem_cgroup_register_region_has_init_arg)
++            #
++            # Determine if dmem_cgroup_register_region() takes a
++            # 'const struct dmem_cgroup_init *' argument.
++            #
++            # Commit e11640b9cea4 ("cgroup/dmem: Introduce struct
++            # dmem_cgroup_init for region initialization") changed the first
++            # argument from 'u64 size' to 'const struct dmem_cgroup_init *'
++            # in Linux 7.3.
++            #
++            CODE="
++            #include <linux/cgroup_dmem.h>
++
++            typeof(dmem_cgroup_register_region)
++                conftest_dmem_cgroup_register_region_has_init_arg;
++
++            struct dmem_cgroup_region *
++            conftest_dmem_cgroup_register_region_has_init_arg(
++                const struct dmem_cgroup_init *init,
++                const char *name_fmt, ...)
++            {
++                return NULL;
++            }"
++
++            compile_check_conftest "$CODE" "NV_DMEM_CGROUP_REGISTER_REGION_HAS_INIT_ARG" "" "types"
+         ;;
+ 
+         misc_cgrp_id)
+diff -Naur a/kernel-open/nvidia/nvidia.Kbuild b/kernel-open/nvidia/nvidia.Kbuild
+--- a/kernel-open/nvidia/nvidia.Kbuild
++++ b/kernel-open/nvidia/nvidia.Kbuild
+@@ -264,6 +264,7 @@
+ NV_CONFTEST_TYPE_COMPILE_TESTS += nr_kernel_misc_reclaimable
+ NV_CONFTEST_TYPE_COMPILE_TESTS += pci_resize_resource_has_exclude_bars_arg
+ NV_CONFTEST_TYPE_COMPILE_TESTS += dmem_cgrp_id
++NV_CONFTEST_TYPE_COMPILE_TESTS += dmem_cgroup_register_region_has_init_arg
+ NV_CONFTEST_TYPE_COMPILE_TESTS += misc_cgrp_id
+ NV_CONFTEST_TYPE_COMPILE_TESTS += is_vma_write_locked_has_mm_lock_seq_arg
+ NV_CONFTEST_TYPE_COMPILE_TESTS += percpu_mm_counter
+diff -Naur a/kernel-open/nvidia/os-interface.c b/kernel-open/nvidia/os-interface.c
+--- a/kernel-open/nvidia/os-interface.c
++++ b/kernel-open/nvidia/os-interface.c
+@@ -3028,7 +3028,16 @@
+ #if defined(NV_DMEM_CGROUP_PRESENT)
+ void* NV_API_CALL os_dmem_cgroup_register_region(const char *name, NvU64 size, NvU64 precharge, void **prechargePool)
+ {
+-    void *region = dmem_cgroup_register_region(size, name);
++    void *region;
++#if defined(NV_DMEM_CGROUP_REGISTER_REGION_HAS_INIT_ARG)
++    const struct dmem_cgroup_init init =
++    {
++        .size = size,
++    };
++    region = dmem_cgroup_register_region(&init, name);
++#else
++    region = dmem_cgroup_register_region(size, name);
++#endif
+     if (IS_ERR(region))
+     {
+         return NULL;

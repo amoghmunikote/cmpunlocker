@@ -61,6 +61,15 @@ PATCH_ORDER=(
     ecc-fbpa-static.patch
     ecc-reporting.patch
 )
+# per-version compatibility patches (driver/patches/<PV>/*.patch): kernel API
+# adaptations an older driver release needs but newer ones already carry
+# upstream (e.g. 615.71.09 + Linux 7.3 dmem_cgroup_init conftest)
+if [[ -d "${PATCH_DIR}/${VERSION}" ]]; then
+    for extra in "${PATCH_DIR}/${VERSION}"/*.patch; do
+        [[ -e "${extra}" ]] || continue
+        PATCH_ORDER+=("$(basename "${extra}")")
+    done
+fi
 PATCH_FILES=()
 for name in "${PATCH_ORDER[@]}"; do
     p="${PATCH_DIR}/${name}"
